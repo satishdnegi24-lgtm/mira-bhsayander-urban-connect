@@ -107,6 +107,8 @@ export interface Report {
     verifiedAt: string;
   };
   isSolved?: boolean;
+  reopenedAt?: string;
+  syncedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

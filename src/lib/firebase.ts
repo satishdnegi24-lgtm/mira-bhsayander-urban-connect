@@ -24,6 +24,7 @@ import {
 import config from '../../firebase-applet-config.json';
 import {
   Report,
+  ReportStatus,
   ReportFeedback,
   ReportUpdate,
   Worker,
@@ -34,9 +35,6 @@ import {
 import {
   DEMO_DEPARTMENTS,
   DEMO_WORKERS,
-  DEMO_OFFICER_ACCOUNTS,
-  DEMO_USERS,
-  INITIAL_REPORTS,
 } from '../data/demoData';
 
 const firebaseConfig = {
@@ -152,6 +150,8 @@ export function subscribeToReports(
             (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
           );
           onReportsUpdate(reportsList);
+        } else {
+          onReportsUpdate([]);
         }
       },
       (error) => {
@@ -204,7 +204,7 @@ export function subscribeToUsers(
   onError?: (err: any) => void
 ): () => void {
   try {
-    const q = query(collection(db, 'users'), where('role', '==', 'citizen'));
+    const q = collection(db, 'users');
     return onSnapshot(
       q,
       (snapshot) => {
@@ -237,6 +237,8 @@ export function subscribeToUpdates(
             (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
           );
           onUpdate(items);
+        } else {
+          onUpdate([]);
         }
       },
       (error) => {
@@ -264,6 +266,8 @@ export function subscribeToFeedbacks(
             (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
           );
           onUpdate(items);
+        } else {
+          onUpdate([]);
         }
       },
       (error) => {
@@ -288,6 +292,8 @@ export function subscribeToNotifications(
         if (!snapshot.empty) {
           const items = snapshot.docs.map((d) => d.data() as NotificationItem);
           onUpdate(items);
+        } else {
+          onUpdate([]);
         }
       },
       (error) => {
@@ -525,31 +531,7 @@ export async function seedInitialFirestoreData(): Promise<void> {
       await setDoc(workerRef, cleanForFirestore(worker), { merge: true });
     }
 
-    // 3. Seed Officer Accounts (Rajesh Sharma, Suresh Patil)
-    for (const officer of DEMO_OFFICER_ACCOUNTS) {
-      const officerRef = doc(db, 'users', officer.id);
-      await setDoc(officerRef, cleanForFirestore(officer), { merge: true });
-    }
-
-    // 4. Seed Default Citizen (Satish Negi) only if not already in Firestore
-    const citizenRef = doc(db, 'users', DEMO_USERS.citizen.id);
-    const citizenDoc = await getDoc(citizenRef);
-    if (!citizenDoc.exists()) {
-      await setDoc(citizenRef, cleanForFirestore(DEMO_USERS.citizen), { merge: true });
-    }
-
-    // 5. Seed Initial Water Reports ONLY IF COLLECTION IS COMPLETELY EMPTY
-    // This strictly prevents initial demo reports from overwriting active user reports!
-    const reportsCollectionSnap = await getDocs(collection(db, 'reports'));
-    if (reportsCollectionSnap.empty) {
-      for (const rep of INITIAL_REPORTS) {
-        const repRef = doc(db, 'reports', rep.id);
-        await setDoc(repRef, cleanForFirestore({
-          ...rep,
-          syncedAt: new Date().toISOString(),
-        }));
-      }
-    }
+    console.log('Firebase Firestore initialized for Water Service Department and Field Workers.');
 
     console.log('Firebase Firestore seed for Water Service completed.');
   } catch (err) {

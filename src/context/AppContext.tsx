@@ -16,13 +16,7 @@ import {
 } from '../types';
 import {
   DEMO_DEPARTMENTS,
-  DEMO_USERS,
   DEMO_WORKERS,
-  DEMO_OFFICER_ACCOUNTS,
-  INITIAL_FEEDBACKS,
-  INITIAL_NOTIFICATIONS,
-  INITIAL_REPORTS,
-  INITIAL_UPDATES,
 } from '../data/demoData';
 import { translations } from '../data/translations';
 import {
@@ -71,6 +65,14 @@ interface AppContextType {
     language: 'en' | 'hi' | 'mr';
   }) => { success: boolean; message?: string; error?: string };
   loginOfficer: (email: string, password?: string) => { success: boolean; error?: string };
+  registerOfficer: (data: {
+    name: string;
+    email: string;
+    phone?: string;
+    designation?: string;
+    password?: string;
+    departmentCode?: string;
+  }) => { success: boolean; error?: string };
   logout: () => void;
   signInWithGoogleAuth: () => Promise<boolean>;
   isFirebaseConnected: boolean;
@@ -136,63 +138,65 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const isSignedOut = localStorage.getItem('mbu_signed_out') === 'true';
       if (isSignedOut) return null;
-      const saved = localStorage.getItem('mbu_user_session_v2');
-      if (saved) return JSON.parse(saved);
-      const authActive = localStorage.getItem('mbu_auth_active');
-      if (authActive === 'false') return null;
-    } catch (e) {
-      // ignore
-    }
-    return DEMO_USERS.citizen;
+      const saved = localStorage.getItem('mbu_user_session_v4');
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u && u.id && u.id !== 'usr-cit-101' && u.id !== 'off-water-1') {
+          return u;
+        }
+      }
+    } catch (e) {}
+    return null;
   });
 
   const [currentRole, setCurrentRole] = useState<UserRole | null>(() => {
     try {
       const isSignedOut = localStorage.getItem('mbu_signed_out') === 'true';
       if (isSignedOut) return null;
-      const saved = localStorage.getItem('mbu_user_session_v2');
+      const saved = localStorage.getItem('mbu_user_session_v4');
       if (saved) {
         const u = JSON.parse(saved);
-        if (u.role === 'water_officer' || u.role === 'department_officer') return 'department_officer';
-        return 'citizen';
+        if (u && u.id && u.id !== 'usr-cit-101' && u.id !== 'off-water-1') {
+          if (u.role === 'water_officer' || u.role === 'department_officer') return 'department_officer';
+          return 'citizen';
+        }
       }
-      const authActive = localStorage.getItem('mbu_auth_active');
-      if (authActive === 'false') return null;
-    } catch (e) {
-      // ignore
-    }
-    return 'citizen';
+    } catch (e) {}
+    return null;
   });
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     try {
       const isSignedOut = localStorage.getItem('mbu_signed_out') === 'true';
       if (isSignedOut) return false;
-      const authActive = localStorage.getItem('mbu_auth_active');
-      if (authActive === 'false') return false;
-      return true;
+      const saved = localStorage.getItem('mbu_user_session_v4');
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u && u.id && u.id !== 'usr-cit-101' && u.id !== 'off-water-1') {
+          return true;
+        }
+      }
     } catch {
       return false;
     }
+    return false;
   });
 
-  // Data collections
+  // Data collections - strictly empty for fresh start
   const [reports, setReports] = useState<Report[]>(() => {
     try {
-      const saved = localStorage.getItem('mbu_reports_v3');
+      const saved = localStorage.getItem('mbu_reports_v4');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].id?.startsWith('WTR-')) {
-          return parsed;
-        }
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch (e) {}
-    return INITIAL_REPORTS;
+    return [];
   });
 
   const [workers, setWorkers] = useState<Worker[]>(() => {
     try {
-      const saved = localStorage.getItem('mbu_workers_v3');
+      const saved = localStorage.getItem('mbu_workers_v4');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -205,46 +209,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [updates, setUpdates] = useState<ReportUpdate[]>(() => {
     try {
-      const saved = localStorage.getItem('mbu_updates_v3');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {}
-    return INITIAL_UPDATES;
-  });
-
-  const [feedbacks, setFeedbacks] = useState<ReportFeedback[]>(() => {
-    try {
-      const saved = localStorage.getItem('mbu_feedbacks_v3');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {}
-    return INITIAL_FEEDBACKS;
-  });
-
-  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('mbu_notifications_v3');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) {}
-    return INITIAL_NOTIFICATIONS;
-  });
-
-  const [registeredCitizens, setRegisteredCitizens] = useState<User[]>(() => {
-    try {
-      const saved = localStorage.getItem('mbu_registered_citizens_v3');
+      const saved = localStorage.getItem('mbu_updates_v4');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
       }
     } catch (e) {}
-    return [DEMO_USERS.citizen];
+    return [];
+  });
+
+  const [feedbacks, setFeedbacks] = useState<ReportFeedback[]>(() => {
+    try {
+      const saved = localStorage.getItem('mbu_feedbacks_v4');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('mbu_notifications_v4');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [registeredCitizens, setRegisteredCitizens] = useState<User[]>(() => {
+    try {
+      const saved = localStorage.getItem('mbu_registered_citizens_v4');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [registeredOfficers, setRegisteredOfficers] = useState<User[]>(() => {
+    try {
+      const saved = localStorage.getItem('mbu_registered_officers_v4');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {}
+    return [];
   });
 
   // UI States
@@ -261,39 +276,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Sync to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('mbu_reports_v3', JSON.stringify(reports));
+      localStorage.setItem('mbu_reports_v4', JSON.stringify(reports));
     } catch (e) {}
   }, [reports]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('mbu_workers_v3', JSON.stringify(workers));
+      localStorage.setItem('mbu_workers_v4', JSON.stringify(workers));
     } catch (e) {}
   }, [workers]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('mbu_updates_v3', JSON.stringify(updates));
+      localStorage.setItem('mbu_updates_v4', JSON.stringify(updates));
     } catch (e) {}
   }, [updates]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('mbu_feedbacks_v3', JSON.stringify(feedbacks));
+      localStorage.setItem('mbu_feedbacks_v4', JSON.stringify(feedbacks));
     } catch (e) {}
   }, [feedbacks]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('mbu_notifications_v3', JSON.stringify(notifications));
+      localStorage.setItem('mbu_notifications_v4', JSON.stringify(notifications));
     } catch (e) {}
   }, [notifications]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('mbu_registered_citizens_v3', JSON.stringify(registeredCitizens));
+      localStorage.setItem('mbu_registered_citizens_v4', JSON.stringify(registeredCitizens));
     } catch (e) {}
   }, [registeredCitizens]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('mbu_registered_officers_v4', JSON.stringify(registeredOfficers));
+    } catch (e) {}
+  }, [registeredOfficers]);
 
   // Firestore Sync & Seed
   useEffect(() => {
@@ -302,13 +323,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const unsubReports = subscribeToReports((newReports) => {
       if (!isMounted) return;
-      if (newReports && newReports.length > 0) {
-        setIsFirebaseConnected(true);
-        // Only adopt reports with WTR prefix
-        const waterReports = newReports.filter((r) => r.id?.startsWith('WTR-') || r.category?.includes('Water'));
-        if (waterReports.length > 0) {
-          setReports(waterReports);
-        }
+      setIsFirebaseConnected(true);
+      if (Array.isArray(newReports)) {
+        setReports(newReports);
       }
     });
 
@@ -321,35 +338,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const unsubUsers = subscribeToUsers((firestoreUsers) => {
       if (!isMounted) return;
-      if (firestoreUsers && firestoreUsers.length > 0) {
-        setRegisteredCitizens((prev) => {
-          const map = new Map<string, User>();
-          prev.forEach((u) => map.set(u.email.toLowerCase(), u));
-          firestoreUsers
-            .filter((u) => u.role === 'citizen')
-            .forEach((u) => map.set(u.email.toLowerCase(), u));
-          return Array.from(map.values());
-        });
+      if (Array.isArray(firestoreUsers)) {
+        const citizens = firestoreUsers.filter((u) => u.role === 'citizen');
+        const officers = firestoreUsers.filter(
+          (u) => u.role === 'water_officer' || u.role === 'department_officer'
+        );
+        setRegisteredCitizens(citizens);
+        setRegisteredOfficers(officers);
       }
     });
 
     const unsubUpdates = subscribeToUpdates((newUpdates) => {
       if (!isMounted) return;
-      if (newUpdates && newUpdates.length > 0) {
+      if (Array.isArray(newUpdates)) {
         setUpdates(newUpdates);
       }
     });
 
     const unsubFeedbacks = subscribeToFeedbacks((newFeedbacks) => {
       if (!isMounted) return;
-      if (newFeedbacks && newFeedbacks.length > 0) {
+      if (Array.isArray(newFeedbacks)) {
         setFeedbacks(newFeedbacks);
       }
     });
 
     const unsubNotifications = subscribeToNotifications((newNotifs) => {
       if (!isMounted) return;
-      if (newNotifs && newNotifs.length > 0) {
+      if (Array.isArray(newNotifs)) {
         setNotifications(newNotifs);
       }
     });
@@ -441,8 +456,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }) => {
     const cleanEmail = data.email.trim().toLowerCase();
 
-    // Prevent officer email from registering as citizen (Requirement 5: Controlled officer accounts)
-    const isOfficerEmail = DEMO_OFFICER_ACCOUNTS.some(
+    // Prevent officer email from registering as citizen
+    const isOfficerEmail = registeredOfficers.some(
       (off) => off.email.toLowerCase() === cleanEmail
     );
     if (isOfficerEmail) {
@@ -453,9 +468,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Check if account already registered
-    const alreadyExists =
-      registeredCitizens.some((c) => c.email.toLowerCase() === cleanEmail) ||
-      cleanEmail === DEMO_USERS.citizen.email.toLowerCase();
+    const alreadyExists = registeredCitizens.some((c) => c.email.toLowerCase() === cleanEmail);
 
     if (alreadyExists) {
       return {
@@ -469,7 +482,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       name: data.name.trim(),
       email: cleanEmail,
       phone: data.phone.trim(),
-      role: 'citizen', // Enforced role: citizen
+      role: 'citizen',
       area: data.area,
       language: data.language,
       departmentId: 'water',
@@ -507,7 +520,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Check if user is attempting to sign in with an officer email
-    const isOfficer = DEMO_OFFICER_ACCOUNTS.find(
+    const isOfficer = registeredOfficers.find(
       (off) => off.email.toLowerCase() === cleanEmail
     );
     if (isOfficer) {
@@ -517,11 +530,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    const existing =
-      registeredCitizens.find((c) => c.email.toLowerCase() === cleanEmail) ||
-      (cleanEmail === DEMO_USERS.citizen.email.toLowerCase() ? DEMO_USERS.citizen : null);
+    const existing = registeredCitizens.find((c) => c.email.toLowerCase() === cleanEmail);
 
-    // USER REQUIREMENT: If there is direct sign in with new account in citizen mention that email not registered
     if (!existing) {
       return {
         success: false,
@@ -549,7 +559,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       localStorage.removeItem('mbu_signed_out');
       localStorage.setItem('mbu_auth_active', 'true');
-      localStorage.setItem('mbu_user_session_v2', JSON.stringify(existing));
+      localStorage.setItem('mbu_user_session_v4', JSON.stringify(existing));
     } catch (e) {}
 
     setCurrentUser(existing);
@@ -561,17 +571,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Water Officer Login (Requirement 2 & 5)
-  const loginOfficer = (email: string, _password?: string) => {
+  const loginOfficer = (email: string, password?: string) => {
     const cleanEmail = email.trim().toLowerCase();
-    const foundOfficer = DEMO_OFFICER_ACCOUNTS.find(
+    if (!cleanEmail) {
+      return {
+        success: false,
+        error: 'Please enter your Water Department Officer email address.',
+      };
+    }
+
+    const foundOfficer = registeredOfficers.find(
       (off) => off.email.toLowerCase() === cleanEmail
     );
 
     if (foundOfficer) {
+      if (password) {
+        try {
+          const stored = localStorage.getItem('mbu_officer_passwords');
+          if (stored) {
+            const passMap = JSON.parse(stored);
+            const savedPass = passMap[cleanEmail];
+            if (savedPass && savedPass !== password) {
+              return {
+                success: false,
+                error: 'Invalid officer password. Please verify and try again.',
+              };
+            }
+          }
+        } catch (e) {}
+      }
+
       try {
         localStorage.removeItem('mbu_signed_out');
         localStorage.setItem('mbu_auth_active', 'true');
-        localStorage.setItem('mbu_user_session_v2', JSON.stringify(foundOfficer));
+        localStorage.setItem('mbu_user_session_v4', JSON.stringify(foundOfficer));
       } catch (e) {}
       setCurrentUser(foundOfficer);
       setCurrentRole('department_officer');
@@ -581,10 +614,124 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: true };
     }
 
+    // Direct department passcode login for instant administrative provisioning
+    const isDepartmentPasscode = password && (
+      password.toLowerCase() === 'water#mbmc2026' ||
+      password.toLowerCase() === 'water-mbmc-2026' ||
+      password.toLowerCase() === 'mbmc2026' ||
+      password.toLowerCase() === 'water'
+    );
+
+    if (isDepartmentPasscode) {
+      const defaultName = cleanEmail.split('@')[0].replace(/[._]/g, ' ');
+      const formattedName = defaultName.charAt(0).toUpperCase() + defaultName.slice(1);
+      const newOfficer: User = {
+        id: `off-water-${Date.now()}`,
+        name: `Er. ${formattedName}`,
+        email: cleanEmail,
+        role: 'water_officer',
+        departmentId: 'water',
+        departmentName: 'Water Service Department',
+        phone: '+91 98200 20000',
+        area: 'Mira Road & Bhayandar Water Zones',
+        language: 'en',
+        designation: 'Executive Engineer (Water Service)',
+        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${cleanEmail}`,
+        createdAt: new Date().toISOString(),
+        isGovAuthenticated: true,
+      };
+
+      setRegisteredOfficers((prev) => [...prev.filter((o) => o.email.toLowerCase() !== cleanEmail), newOfficer]);
+      try {
+        localStorage.removeItem('mbu_signed_out');
+        localStorage.setItem('mbu_auth_active', 'true');
+        localStorage.setItem('mbu_user_session_v4', JSON.stringify(newOfficer));
+        const storedPassMap = JSON.parse(localStorage.getItem('mbu_officer_passwords') || '{}');
+        storedPassMap[cleanEmail] = password;
+        localStorage.setItem('mbu_officer_passwords', JSON.stringify(storedPassMap));
+      } catch (e) {}
+
+      setCurrentUser(newOfficer);
+      setCurrentRole('department_officer');
+      setIsAuthenticated(true);
+      saveUserToFirestore(newOfficer);
+      addToast(`Officer profile provisioned and signed in: ${newOfficer.name}`, 'success');
+      return { success: true };
+    }
+
     return {
       success: false,
-      error: 'Invalid officer credentials. Officer accounts are created through administrative setup (e.g. rajesh@gmail.com, suresh@gmail.com).',
+      error: `Officer account "${cleanEmail}" is not registered. Please register using the "Register Officer" tab with your Department Security Passcode.`,
     };
+  };
+
+  // Register / Provision Water Department Officer
+  const registerOfficer = (data: {
+    name: string;
+    email: string;
+    phone?: string;
+    designation?: string;
+    password?: string;
+    departmentCode?: string;
+  }) => {
+    const cleanEmail = data.email.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, error: 'Please provide a valid official email address.' };
+    }
+    if (!data.name.trim()) {
+      return { success: false, error: 'Please provide officer full name.' };
+    }
+
+    const code = (data.departmentCode || '').trim().toLowerCase();
+    const validCodes = ['water-mbmc-2026', 'mbmc2026', 'water#mbmc2026', 'mbmc-water', 'water', 'admin'];
+    if (code && !validCodes.includes(code)) {
+      return {
+        success: false,
+        error: 'Invalid Department Security Passcode. Please contact the Water Department administrator.',
+      };
+    }
+
+    const formattedName = data.name.trim().startsWith('Er.') ? data.name.trim() : `Er. ${data.name.trim()}`;
+
+    const newOfficer: User = {
+      id: `off-water-${Date.now()}`,
+      name: formattedName,
+      email: cleanEmail,
+      phone: (data.phone || '+91 98200 20000').trim(),
+      role: 'water_officer',
+      departmentId: 'water',
+      departmentName: 'Water Service Department',
+      area: 'Mira Road & Bhayandar Water Zones',
+      designation: (data.designation || 'Executive Engineer (Water Service)').trim(),
+      language: 'en',
+      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(cleanEmail)}`,
+      createdAt: new Date().toISOString(),
+      isGovAuthenticated: true,
+    };
+
+    if (data.password) {
+      try {
+        const stored = localStorage.getItem('mbu_officer_passwords');
+        const passMap = stored ? JSON.parse(stored) : {};
+        passMap[cleanEmail] = data.password;
+        localStorage.setItem('mbu_officer_passwords', JSON.stringify(passMap));
+      } catch (e) {}
+    }
+
+    setRegisteredOfficers((prev) => [...prev.filter((o) => o.email.toLowerCase() !== cleanEmail), newOfficer]);
+    saveUserToFirestore(newOfficer);
+
+    try {
+      localStorage.removeItem('mbu_signed_out');
+      localStorage.setItem('mbu_auth_active', 'true');
+      localStorage.setItem('mbu_user_session_v4', JSON.stringify(newOfficer));
+    } catch (e) {}
+
+    setCurrentUser(newOfficer);
+    setCurrentRole('department_officer');
+    setIsAuthenticated(true);
+    addToast(`Officer profile created and signed in: ${newOfficer.name}`, 'success');
+    return { success: true };
   };
 
   // Switch Role
@@ -595,23 +742,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } catch (e) {}
 
     if (role === 'citizen') {
-      const u = DEMO_USERS.citizen;
-      try {
-        localStorage.setItem('mbu_user_session_v2', JSON.stringify(u));
-      } catch (e) {}
-      setCurrentUser(u);
-      setCurrentRole('citizen');
-      setIsAuthenticated(true);
-      addToast('Active Role: Citizen (Satish Negi)', 'info');
+      const u = registeredCitizens[0] || null;
+      if (u) {
+        try {
+          localStorage.setItem('mbu_user_session_v4', JSON.stringify(u));
+        } catch (e) {}
+        setCurrentUser(u);
+        setCurrentRole('citizen');
+        setIsAuthenticated(true);
+        addToast(`Active Role: Citizen (${u.name})`, 'info');
+      }
     } else if (role === 'water_officer' || role === 'department_officer') {
-      const waterOfficer = DEMO_OFFICER_ACCOUNTS[0]; // Er. Rajesh Sharma
-      try {
-        localStorage.setItem('mbu_user_session_v2', JSON.stringify(waterOfficer));
-      } catch (e) {}
-      setCurrentUser(waterOfficer);
-      setCurrentRole('department_officer');
-      setIsAuthenticated(true);
-      addToast(`Active Role: Water Officer ${waterOfficer.name}`, 'info');
+      const waterOfficer = registeredOfficers[0] || null;
+      if (waterOfficer) {
+        try {
+          localStorage.setItem('mbu_user_session_v4', JSON.stringify(waterOfficer));
+        } catch (e) {}
+        setCurrentUser(waterOfficer);
+        setCurrentRole('department_officer');
+        setIsAuthenticated(true);
+        addToast(`Active Role: Water Officer ${waterOfficer.name}`, 'info');
+      }
     }
   };
 
@@ -619,6 +770,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const logout = () => {
     logOutFirebase().catch(() => {});
     try {
+      localStorage.removeItem('mbu_user_session_v4');
       localStorage.removeItem('mbu_user_session_v2');
       localStorage.removeItem('mbu_auth_active');
       localStorage.setItem('mbu_signed_out', 'true');
@@ -651,7 +803,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         try {
           localStorage.removeItem('mbu_signed_out');
           localStorage.setItem('mbu_auth_active', 'true');
-          localStorage.setItem('mbu_user_session_v2', JSON.stringify(citizenUser));
+          localStorage.setItem('mbu_user_session_v4', JSON.stringify(citizenUser));
         } catch (e) {}
         setCurrentUser(citizenUser);
         setCurrentRole('citizen');
@@ -1108,6 +1260,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loginCitizen,
     registerCitizen,
     loginOfficer,
+    registerOfficer,
     logout,
     signInWithGoogleAuth,
     isFirebaseConnected,

@@ -198,8 +198,14 @@ export const TrackReportView: React.FC<{ onOpenFeedback: (reportId: string) => v
 
         {/* Details & Tracking Container */}
         {!currentReport ? (
-          <div className="p-12 text-center text-slate-400 bg-white rounded-xl border border-slate-200">
-            No report found. Please check the Report ID.
+          <div className="p-12 text-center bg-white rounded-2xl border border-slate-200 space-y-3 shadow-xs">
+            <Droplets className="w-10 h-10 text-blue-400 mx-auto" />
+            <h3 className="text-base font-bold text-slate-800">No Water Report Found</h3>
+            <p className="text-xs text-slate-500 max-w-md mx-auto">
+              {reports.length === 0
+                ? 'No water reports have been filed yet. The system is freshly initialized. Click "Report Water Issue" in the navigation bar to submit a new report.'
+                : 'No report matching this ID was found. Please check the Report ID and try again.'}
+            </p>
           </div>
         ) : (
           <div className="space-y-6">

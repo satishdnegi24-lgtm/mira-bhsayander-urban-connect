@@ -6,18 +6,15 @@ import {
   Mail,
   User as UserIcon,
   Phone,
-  MapPin,
   Eye,
   EyeOff,
   CheckCircle2,
   Shield,
   Droplet,
   AlertCircle,
-  Briefcase,
   KeyRound,
-  Globe,
+  UserPlus,
 } from 'lucide-react';
-import { DEMO_OFFICER_ACCOUNTS } from '../../data/demoData';
 
 const LOCALITIES = [
   'Mira Road East (Beverly Park)',
@@ -50,6 +47,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     loginCitizen,
     registerCitizen,
     loginOfficer,
+    registerOfficer,
     signInWithGoogleAuth,
     setActivePage,
     addToast,
@@ -65,13 +63,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     initialMode === 'register' ? 'signup' : 'signin'
   );
 
+  // Sub-mode for officer: 'signin' | 'register'
+  const [officerMode, setOfficerMode] = useState<'signin' | 'register'>('signin');
+
   // Show/hide passwords
   const [showCitizenPassword, setShowCitizenPassword] = useState(false);
   const [showOfficerPassword, setShowOfficerPassword] = useState(false);
 
-  // Citizen Sign In form
-  const [citizenSignInEmail, setCitizenSignInEmail] = useState('satish@gmail.com');
-  const [citizenSignInPassword, setCitizenSignInPassword] = useState('password123');
+  // Citizen Sign In form (Empty by default - no default sign in)
+  const [citizenSignInEmail, setCitizenSignInEmail] = useState('');
+  const [citizenSignInPassword, setCitizenSignInPassword] = useState('');
 
   // Citizen Sign Up form (Requirement 4)
   const [regFullName, setRegFullName] = useState('');
@@ -85,10 +86,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
   const [citizenSignInError, setCitizenSignInError] = useState<string | null>(null);
 
-  // Water Department Officer Sign In form (Requirement 2 & 5)
-  const [officerEmail, setOfficerEmail] = useState('rajesh@gmail.com');
-  const [officerPassword, setOfficerPassword] = useState('water#mbmc2026');
+  // Water Department Officer Sign In form (Empty by default - no demo credentials)
+  const [officerEmail, setOfficerEmail] = useState('');
+  const [officerPassword, setOfficerPassword] = useState('');
   const [officerError, setOfficerError] = useState<string | null>(null);
+
+  // Officer Registration / Activation form
+  const [regOfficerName, setRegOfficerName] = useState('');
+  const [regOfficerEmail, setRegOfficerEmail] = useState('');
+  const [regOfficerPhone, setRegOfficerPhone] = useState('');
+  const [regOfficerDesignation, setRegOfficerDesignation] = useState('Executive Engineer (Water Service)');
+  const [regOfficerPassword, setRegOfficerPassword] = useState('');
+  const [regOfficerConfirmPassword, setRegOfficerConfirmPassword] = useState('');
+  const [regOfficerCode, setRegOfficerCode] = useState('');
+  const [officerRegError, setOfficerRegError] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialMode === 'gov') {
@@ -99,6 +110,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
     setCitizenSignInError(null);
     setRegError(null);
+    setOfficerError(null);
+    setOfficerRegError(null);
   }, [initialMode, isOpen]);
 
   if (!isOpen) return null;
@@ -140,7 +153,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     });
 
     if (res.success) {
-      setSuccessBanner('Account created successfully. Please sign in.');
+      setSuccessBanner('Account created successfully. Please sign in with your email and password.');
       setCitizenSignInEmail(regEmail.trim());
       setCitizenSignInPassword(regPassword);
       setCitizenSignInError(null);
@@ -194,15 +207,46 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setActivePage('dashboard');
       onClose();
     } else {
-      setOfficerError(res.error || 'Invalid credentials.');
+      setOfficerError(res.error || 'Invalid officer credentials.');
     }
   };
 
-  // Quick Demo Officer Loader
-  const loadDemoOfficer = (email: string) => {
-    setOfficerEmail(email);
-    setOfficerPassword('water#mbmc2026');
-    setOfficerError(null);
+  // Handle Water Officer Registration
+  const handleOfficerRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    setOfficerRegError(null);
+    if (!regOfficerName.trim()) {
+      setOfficerRegError('Please provide your full name.');
+      return;
+    }
+    if (!regOfficerEmail.trim() || !regOfficerEmail.includes('@')) {
+      setOfficerRegError('Please provide a valid official email address.');
+      return;
+    }
+    if (regOfficerPassword.length < 6) {
+      setOfficerRegError('Password must be at least 6 characters.');
+      return;
+    }
+    if (regOfficerPassword !== regOfficerConfirmPassword) {
+      setOfficerRegError('Password and Confirm Password do not match.');
+      return;
+    }
+
+    const res = registerOfficer({
+      name: regOfficerName.trim(),
+      email: regOfficerEmail.trim(),
+      phone: regOfficerPhone.trim(),
+      designation: regOfficerDesignation,
+      password: regOfficerPassword,
+      departmentCode: regOfficerCode.trim(),
+    });
+
+    if (res.success) {
+      setActivePage('dashboard');
+      onClose();
+    } else {
+      setOfficerRegError(res.error || 'Failed to register officer profile.');
+    }
   };
 
   return (
@@ -338,7 +382,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                           setCitizenSignInEmail(e.target.value);
                           if (citizenSignInError) setCitizenSignInError(null);
                         }}
-                        placeholder="e.g. satish@gmail.com, rahul@yahoo.com"
+                        placeholder="e.g. citizen@gmail.com, rahul@yahoo.com"
                         className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500 bg-white"
                       />
                     </div>
@@ -571,90 +615,244 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <div className="p-3 bg-cyan-50 border border-cyan-200 rounded-xl text-xs text-cyan-950 flex items-start gap-2.5">
                 <Shield className="w-4 h-4 text-cyan-700 shrink-0 mt-0.5" />
                 <div>
-                  <strong className="font-bold block">Water Service Department — Officer Access</strong>
+                  <strong className="font-bold block">Water Service Department — Official Control Desk</strong>
                   <span className="text-[11px] text-cyan-800">
-                    Water Department Officer accounts are provisioned administratively. Public registration cannot create officer accounts.
+                    Secure municipal access for authorized Water Department Engineers and Administrative Officers.
                   </span>
                 </div>
               </div>
 
-              {officerError && (
-                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{officerError}</span>
-                </div>
+              {/* Officer Sign In vs Officer Registration Toggle */}
+              <div className="flex rounded-lg bg-slate-100 p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOfficerMode('signin');
+                    setOfficerError(null);
+                    setOfficerRegError(null);
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${
+                    officerMode === 'signin'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Officer Sign In
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOfficerMode('register');
+                    setOfficerError(null);
+                    setOfficerRegError(null);
+                    if (officerEmail && !regOfficerEmail) {
+                      setRegOfficerEmail(officerEmail);
+                    }
+                  }}
+                  className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-colors ${
+                    officerMode === 'register'
+                      ? 'bg-white text-slate-900 shadow-xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Register Officer Profile
+                </button>
+              </div>
+
+              {/* OFFICER SIGN IN FORM */}
+              {officerMode === 'signin' && (
+                <form onSubmit={handleOfficerSignIn} className="space-y-3 pt-1">
+                  {officerError && (
+                    <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 animate-in fade-in">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{officerError}</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Official Officer Email Address
+                    </label>
+                    <div className="relative">
+                      <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="email"
+                        required
+                        value={officerEmail}
+                        onChange={(e) => {
+                          setOfficerEmail(e.target.value);
+                          if (officerError) setOfficerError(null);
+                        }}
+                        placeholder="e.g. officer@gmail.com, engineer@mbmc.gov.in"
+                        className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Officer Password
+                    </label>
+                    <div className="relative">
+                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type={showOfficerPassword ? 'text' : 'password'}
+                        required
+                        value={officerPassword}
+                        onChange={(e) => setOfficerPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full pl-9 pr-9 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowOfficerPassword(!showOfficerPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        {showOfficerPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-cyan-700 hover:bg-cyan-800 text-white rounded-lg text-xs font-bold shadow-md transition-colors mt-2"
+                  >
+                    Sign In to Water Service Dashboard
+                  </button>
+
+                  <p className="text-[11px] text-slate-500 text-center mt-2">
+                    New department officer? Switch to <button type="button" onClick={() => setOfficerMode('register')} className="text-cyan-700 font-semibold underline">Register Officer Profile</button> to activate access.
+                  </p>
+                </form>
               )}
 
-              <form onSubmit={handleOfficerSignIn} className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Officer Email Address (e.g. rajesh@gmail.com, suresh@gmail.com)
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={officerEmail}
-                      onChange={(e) => setOfficerEmail(e.target.value)}
-                      placeholder="e.g. rajesh@gmail.com"
-                      className="w-full pl-9 pr-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
-                    />
+              {/* OFFICER REGISTRATION FORM */}
+              {officerMode === 'register' && (
+                <form onSubmit={handleOfficerRegister} className="space-y-3 pt-1">
+                  {officerRegError && (
+                    <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-center gap-2 text-xs text-rose-700 animate-in fade-in">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{officerRegError}</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Officer Full Name *
+                    </label>
+                    <div className="relative">
+                      <UserIcon className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        required
+                        value={regOfficerName}
+                        onChange={(e) => setRegOfficerName(e.target.value)}
+                        placeholder="e.g. Er. S. K. Patil"
+                        className="w-full pl-9 pr-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Officer Password / Access Code
-                  </label>
-                  <div className="relative">
-                    <KeyRound className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showOfficerPassword ? 'text' : 'password'}
-                      required
-                      value={officerPassword}
-                      onChange={(e) => setOfficerPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-9 pr-9 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowOfficerPassword(!showOfficerPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    >
-                      {showOfficerPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                    </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Official Email *
+                      </label>
+                      <input
+                        type="email"
+                        required
+                        value={regOfficerEmail}
+                        onChange={(e) => setRegOfficerEmail(e.target.value)}
+                        placeholder="officer@gmail.com"
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Official Phone Number
+                      </label>
+                      <input
+                        type="tel"
+                        value={regOfficerPhone}
+                        onChange={(e) => setRegOfficerPhone(e.target.value)}
+                        placeholder="+91 98200 00000"
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <button
-                  type="submit"
-                  className="w-full py-2.5 bg-cyan-700 hover:bg-cyan-800 text-white rounded-lg text-xs font-bold shadow-md transition-colors mt-2"
-                >
-                  Sign In to Water Service Dashboard
-                </button>
-              </form>
-
-              {/* Authorized Water Department Officers (Requirement 5) */}
-              <div className="border-t border-slate-200 pt-3">
-                <span className="text-[11px] font-bold text-slate-600 block mb-2">
-                  Water Service Department Officers (Quick Demo Sign-In):
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  {DEMO_OFFICER_ACCOUNTS.map((officer) => (
-                    <button
-                      key={officer.id}
-                      type="button"
-                      onClick={() => loadDemoOfficer(officer.email)}
-                      className="p-2.5 border border-slate-200 rounded-lg text-left hover:bg-cyan-50/50 hover:border-cyan-300 transition-colors"
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Officer Designation *
+                    </label>
+                    <select
+                      value={regOfficerDesignation}
+                      onChange={(e) => setRegOfficerDesignation(e.target.value)}
+                      className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-cyan-500"
                     >
-                      <div className="font-semibold text-slate-900">{officer.name}</div>
-                      <div className="text-[10px] text-cyan-800">{officer.designation}</div>
-                      <div className="text-[10px] text-slate-500 font-mono mt-0.5">{officer.email}</div>
-                    </button>
-                  ))}
-                </div>
-              </div>
+                      <option value="Executive Engineer (Water Service)">Executive Engineer (Water Service)</option>
+                      <option value="Assistant Distribution Officer (Water)">Assistant Distribution Officer (Water)</option>
+                      <option value="Water Quality & Reservoir Inspector">Water Quality & Reservoir Inspector</option>
+                      <option value="Pipeline Maintenance Supervisor">Pipeline Maintenance Supervisor</option>
+                      <option value="Grievance Redressal Officer">Grievance Redressal Officer</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Password *
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={regOfficerPassword}
+                        onChange={(e) => setRegOfficerPassword(e.target.value)}
+                        placeholder="Min 6 characters"
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 mb-1">
+                        Confirm Password *
+                      </label>
+                      <input
+                        type="password"
+                        required
+                        value={regOfficerConfirmPassword}
+                        onChange={(e) => setRegOfficerConfirmPassword(e.target.value)}
+                        placeholder="Repeat password"
+                        className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                      Department Passcode / Authorization Key
+                    </label>
+                    <input
+                      type="text"
+                      value={regOfficerCode}
+                      onChange={(e) => setRegOfficerCode(e.target.value)}
+                      placeholder="e.g. WATER-MBMC-2026 (Optional for verification)"
+                      className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      Enables official authority verification for Water Service Department officers.
+                    </span>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-2.5 bg-cyan-700 hover:bg-cyan-800 text-white rounded-lg text-xs font-bold shadow-md transition-colors mt-2"
+                  >
+                    Register & Activate Officer Account
+                  </button>
+                </form>
+              )}
             </div>
           )}
         </div>

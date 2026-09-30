@@ -61,7 +61,7 @@ export const OfficerDashboard: React.FC = () => {
     addReportComment,
   } = useApp();
 
-  const officerName = currentUser?.name || 'Er. Rajesh Sharma';
+  const officerName = currentUser?.name || 'Water Department Officer';
   const officerDesignation = currentUser?.designation || 'Executive Engineer (Water Service)';
 
   // Filter states

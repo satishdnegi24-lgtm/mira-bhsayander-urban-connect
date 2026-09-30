@@ -44,8 +44,8 @@ export const CitizenDashboard: React.FC<{ onOpenFeedback: (reportId: string) => 
 
   const [categoryFilter, setCategoryFilter] = useState('All');
 
-  // Reports filed by current citizen (fallback to showing demo water reports if empty)
-  const displayReports = citizenReports.length > 0 ? citizenReports : reports;
+  // Reports filed by current citizen
+  const displayReports = currentUser ? citizenReports : reports;
 
   const filtered = displayReports.filter(
     (r) => categoryFilter === 'All' || r.category === categoryFilter
