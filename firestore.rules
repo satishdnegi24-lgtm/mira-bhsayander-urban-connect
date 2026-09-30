@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // User accounts (Citizen & Department Officer)
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Municipal Departments
+    match /departments/{departmentId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Department Workers (Employee records, not users)
+    match /workers/{workerId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Civic Problem Reports
+    match /reports/{reportId} {
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if request.auth != null;
+    }
+
+    // Progress updates log
+    match /updates/{updateId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Citizen post-resolution feedback
+    match /feedbacks/{feedbackId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Notification items
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}

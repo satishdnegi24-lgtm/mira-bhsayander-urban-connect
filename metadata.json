@@ -1,0 +1,6 @@
+{
+  "name": "Mira-Bhayandar Urban Connect",
+  "description": "One Digital Platform for a Better City. Intelligent urban service management and citizen engagement platform for Mira-Bhayandar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

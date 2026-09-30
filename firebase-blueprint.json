@@ -1,0 +1,116 @@
+{
+  "$schema": "https://firebase.google.com/schemas/firestore-blueprint.json",
+  "entities": {
+    "users": {
+      "description": "Authenticated users in exactly two roles: citizen and water_officer",
+      "fields": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "phone": { "type": "string" },
+        "area": { "type": "string" },
+        "language": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "designation": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "departments": {
+      "description": "Water Service Department of Mira-Bhayandar Municipal Corporation",
+      "fields": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "description": { "type": "string" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "workers": {
+      "description": "Field employees belonging to Water Service Department (NOT users, no login)",
+      "fields": {
+        "workerId": { "type": "string" },
+        "workerName": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "phoneNumber": { "type": "string" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "reports": {
+      "description": "Urban water problem reports in Mira-Bhayandar with WTR- prefix and 9 workflow statuses",
+      "fields": {
+        "id": { "type": "string" },
+        "reportId": { "type": "string" },
+        "citizenId": { "type": "string" },
+        "citizenName": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "aiSuggestedCategory": { "type": "string" },
+        "departmentId": { "type": "string" },
+        "departmentName": { "type": "string" },
+        "priority": { "type": "string" },
+        "status": { "type": "string" },
+        "area": { "type": "string" },
+        "location": { "type": "string" },
+        "landmark": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "assignedWorkerId": { "type": "string" },
+        "assignedWorkerName": { "type": "string" },
+        "assignedByOfficerId": { "type": "string" },
+        "assignedByOfficerName": { "type": "string" },
+        "assignedAt": { "type": "string" },
+        "startedAt": { "type": "string" },
+        "isSolved": { "type": "boolean" },
+        "resolutionNotes": { "type": "string" },
+        "resolutionPhotoUrl": { "type": "string" },
+        "reopenComment": { "type": "string" },
+        "solvedAt": { "type": "string" },
+        "closedAt": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "feedbacks": {
+      "description": "Citizen post-resolution verification feedback and satisfaction ratings",
+      "fields": {
+        "id": { "type": "string" },
+        "reportId": { "type": "string" },
+        "citizenId": { "type": "string" },
+        "rating": { "type": "number" },
+        "resolutionStatus": { "type": "string" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "notifications": {
+      "description": "Database-driven notification alerts for citizens and water department officers",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string" },
+        "read": { "type": "boolean" },
+        "reportId": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "updates": {
+      "description": "Audit trail log of status changes and officer/worker progress updates on water reports",
+      "fields": {
+        "id": { "type": "string" },
+        "reportId": { "type": "string" },
+        "status": { "type": "string" },
+        "message": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "role": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    }
+  }
+}
