@@ -232,6 +232,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    if (!regOfficerCode.trim()) {
+      setOfficerRegError('Department Passcode / Authorization Key is mandatory for all Water Department officers.');
+      return;
+    }
+
+    if (regOfficerCode.trim().toUpperCase() !== 'WTR-45') {
+      setOfficerRegError('Invalid Department Passcode / Authorization Key. Please enter the valid verification code provided by the Water Department Engineering Administration.');
+      return;
+    }
+
     const res = registerOfficer({
       name: regOfficerName.trim(),
       email: regOfficerEmail.trim(),
@@ -830,18 +840,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
-                      Department Passcode / Authorization Key
-                    </label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-semibold text-slate-700">
+                        Department Passcode / Authorization Key *
+                      </label>
+                      <span className="text-[10px] text-cyan-800 font-bold bg-cyan-100 px-2 py-0.5 rounded-full">
+                        Mandatory
+                      </span>
+                    </div>
                     <input
-                      type="text"
+                      type="password"
+                      required
                       value={regOfficerCode}
-                      onChange={(e) => setRegOfficerCode(e.target.value)}
-                      placeholder="e.g. WATER-MBMC-2026 (Optional for verification)"
+                      onChange={(e) => {
+                        setRegOfficerCode(e.target.value);
+                        if (officerRegError) setOfficerRegError(null);
+                      }}
+                      placeholder="Enter official authorization key"
                       className="w-full px-3 py-2 text-xs font-mono border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-cyan-500 bg-white"
                     />
                     <span className="text-[10px] text-slate-400 mt-1 block">
-                      Enables official authority verification for Water Service Department officers.
+                      Mandatory verification code provided by the Water Department Engineering Administration.
                     </span>
                   </div>
 

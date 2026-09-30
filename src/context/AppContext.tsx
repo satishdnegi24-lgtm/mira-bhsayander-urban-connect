@@ -615,12 +615,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     // Direct department passcode login for instant administrative provisioning
-    const isDepartmentPasscode = password && (
-      password.toLowerCase() === 'water#mbmc2026' ||
-      password.toLowerCase() === 'water-mbmc-2026' ||
-      password.toLowerCase() === 'mbmc2026' ||
-      password.toLowerCase() === 'water'
-    );
+    const isDepartmentPasscode = password && password.trim().toUpperCase() === 'WTR-45';
 
     if (isDepartmentPasscode) {
       const defaultName = cleanEmail.split('@')[0].replace(/[._]/g, ' ');
@@ -682,12 +677,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: 'Please provide officer full name.' };
     }
 
-    const code = (data.departmentCode || '').trim().toLowerCase();
-    const validCodes = ['water-mbmc-2026', 'mbmc2026', 'water#mbmc2026', 'mbmc-water', 'water', 'admin'];
-    if (code && !validCodes.includes(code)) {
+    const code = (data.departmentCode || '').trim().toUpperCase();
+    if (code !== 'WTR-45') {
       return {
         success: false,
-        error: 'Invalid Department Security Passcode. Please contact the Water Department administrator.',
+        error: 'Invalid Department Passcode / Authorization Key. Please enter the valid verification code provided by the Water Department Engineering Administration.',
       };
     }
 
