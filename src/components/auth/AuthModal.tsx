@@ -35,12 +35,14 @@ const LOCALITIES = [
 interface AuthModalProps {
   isOpen: boolean;
   initialMode?: 'login' | 'register' | 'gov';
+  promptMessage?: string | null;
   onClose: () => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   initialMode = 'login',
+  promptMessage,
   onClose,
 }) => {
   const {
@@ -50,6 +52,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     registerOfficer,
     signInWithGoogleAuth,
     setActivePage,
+    setIsReportModalOpen,
+    authPromptMessage,
     addToast,
   } = useApp();
 
@@ -184,7 +188,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     const res = loginCitizen(emailTrim, citizenSignInPassword);
     if (res.success) {
-      setActivePage('dashboard');
+      if (promptMessage || authPromptMessage) {
+        setIsReportModalOpen(true);
+      } else {
+        setActivePage('dashboard');
+      }
       onClose();
     } else {
       const errorMsg = res.error || `Email "${emailTrim}" is not registered. Please create an account before signing in.`;
@@ -309,6 +317,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="mb-5 p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2.5 text-xs text-emerald-800 font-semibold animate-in fade-in">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>{successBanner}</span>
+            </div>
+          )}
+
+          {(promptMessage || authPromptMessage) && (
+            <div className="mb-4 p-3.5 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-xs text-amber-950 animate-in fade-in shadow-2xs">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <strong className="font-bold block text-slate-900">Sign In to Report Issue</strong>
+                <span className="text-slate-600">{promptMessage || authPromptMessage}</span>
+              </div>
             </div>
           )}
 
@@ -446,7 +464,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     onClick={async () => {
                       const ok = await signInWithGoogleAuth();
                       if (ok) {
-                        setActivePage('dashboard');
+                        if (promptMessage || authPromptMessage) {
+                          setIsReportModalOpen(true);
+                        } else {
+                          setActivePage('dashboard');
+                        }
                         onClose();
                       }
                     }}

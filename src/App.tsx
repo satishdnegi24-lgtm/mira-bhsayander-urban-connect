@@ -20,15 +20,23 @@ import { AiCitizenAssistant } from './components/ai/AiCitizenAssistant';
 import { ToastContainer } from './components/common/ToastContainer';
 
 const AppContent: React.FC = () => {
-  const { activePage, currentRole, isOfficer, setActivePage, setIsReportModalOpen } = useApp();
+  const {
+    activePage,
+    currentRole,
+    isOfficer,
+    setActivePage,
+    setIsReportModalOpen,
+    isAuthModalOpen,
+    authModalMode,
+    authPromptMessage,
+    openAuthModal,
+    closeAuthModal,
+  } = useApp();
 
-  const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register' | 'gov'>('login');
   const [feedbackReportId, setFeedbackReportId] = useState<string | null>(null);
 
   const handleOpenAuth = (mode: 'login' | 'register' | 'gov') => {
-    setAuthMode(mode);
-    setAuthModalOpen(true);
+    openAuthModal(mode);
   };
 
   const handleOpenFeedback = (reportId: string) => {
@@ -125,9 +133,10 @@ const AppContent: React.FC = () => {
       />
 
       <AuthModal
-        isOpen={authModalOpen}
-        initialMode={authMode}
-        onClose={() => setAuthModalOpen(false)}
+        isOpen={isAuthModalOpen}
+        initialMode={authModalMode}
+        promptMessage={authPromptMessage}
+        onClose={closeAuthModal}
       />
 
       {/* Floating MB Urban AI Assistant Widget */}

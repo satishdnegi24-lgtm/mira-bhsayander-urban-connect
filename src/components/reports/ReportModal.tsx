@@ -54,6 +54,9 @@ export const ReportModal: React.FC = () => {
     addReport,
     setSelectedReportId,
     setActivePage,
+    isAuthenticated,
+    currentUser,
+    openAuthModal,
   } = useApp();
 
   // Form Fields (Requirement 13)
@@ -92,6 +95,78 @@ export const ReportModal: React.FC = () => {
   }, [isReportModalOpen, reportCategoryPreset]);
 
   if (!isReportModalOpen) return null;
+
+  // Gate unauthenticated users: must sign in or register to report issue
+  if (!isAuthenticated || !currentUser) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in duration-150">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+          <div className="flex items-center justify-between p-4 px-6 border-b border-slate-200 bg-slate-50/70">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
+                <Droplets className="w-4 h-4 text-blue-700" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Report Water Issue</h3>
+                <p className="text-[11px] text-slate-500">Water Service Department · MBMC</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsReportModalOpen(false)}
+              className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="p-6 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-600 mx-auto flex items-center justify-center shadow-xs">
+              <ShieldAlert className="w-7 h-7 text-amber-600" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-lg font-bold text-slate-900">Sign In to Report Issue</h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Anonymous and unauthenticated complaints cannot be accepted by the Water Service Department. Please sign in or register your citizen account to file an official water service grievance.
+              </p>
+            </div>
+
+            <div className="pt-2 space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsReportModalOpen(false);
+                  openAuthModal('login', 'Please sign in to report a water issue.');
+                }}
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition-colors flex items-center justify-center gap-2"
+              >
+                <span>Sign In to Report Issue</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsReportModalOpen(false);
+                  openAuthModal('register', 'Create an account to report and track water issues.');
+                }}
+                className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold transition-colors"
+              >
+                New Citizen? Register Here
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsReportModalOpen(false)}
+                className="w-full py-2 text-slate-400 hover:text-slate-600 text-xs transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Handle Photo Upload
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,6 +207,11 @@ export const ReportModal: React.FC = () => {
   // Submit Report triggers AI Analysis Review (Requirement 13 & 14)
   const handleInitialSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAuthenticated || !currentUser) {
+      setIsReportModalOpen(false);
+      openAuthModal('login', 'Please sign in or register to report a water issue.');
+      return;
+    }
     if (!validate()) return;
 
     setStage('analyzing');
@@ -160,6 +240,11 @@ export const ReportModal: React.FC = () => {
 
   // Final Confirmation (Requirement 14)
   const handleConfirmReport = () => {
+    if (!isAuthenticated || !currentUser) {
+      setIsReportModalOpen(false);
+      openAuthModal('login', 'Please sign in or register to report a water issue.');
+      return;
+    }
     setIsSubmittingFinal(true);
 
     const chosenCategory = aiResult?.category || category;

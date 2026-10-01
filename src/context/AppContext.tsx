@@ -128,6 +128,14 @@ interface AppContextType {
   toasts: Toast[];
   addToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   removeToast: (id: string) => void;
+  isAuthModalOpen: boolean;
+  setIsAuthModalOpen: (open: boolean) => void;
+  authModalMode: 'login' | 'register' | 'gov';
+  setAuthModalMode: (mode: 'login' | 'register' | 'gov') => void;
+  authPromptMessage: string | null;
+  setAuthPromptMessage: (msg: string | null) => void;
+  openAuthModal: (mode?: 'login' | 'register' | 'gov', promptMessage?: string | null) => void;
+  closeAuthModal: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -266,12 +274,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [language, setLanguage] = useState<Language>('en');
   const [activePage, setActivePage] = useState<ActivePage>('home');
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isReportModalOpenState, setIsReportModalOpenState] = useState(false);
   const [reportCategoryPreset, setReportCategoryPreset] = useState<ReportCategory | null>(null);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isFirebaseConnected, setIsFirebaseConnected] = useState(false);
+
+  // Authentication Modal States (Guards unauthenticated actions)
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'gov'>('login');
+  const [authPromptMessage, setAuthPromptMessage] = useState<string | null>(null);
+
+  const openAuthModal = (
+    mode: 'login' | 'register' | 'gov' = 'login',
+    promptMessage: string | null = null
+  ) => {
+    setAuthModalMode(mode);
+    setAuthPromptMessage(promptMessage);
+    setIsAuthModalOpen(true);
+  };
+
+  const closeAuthModal = () => {
+    setIsAuthModalOpen(false);
+    setAuthPromptMessage(null);
+  };
+
+  // Guarded report modal opener: without sign in / sign up, do not open report form; show sign in
+  const setIsReportModalOpen = (open: boolean) => {
+    if (open) {
+      if (!isAuthenticated || !currentUser) {
+        addToast('Sign in required. Please sign in or register to report a water issue.', 'info');
+        setAuthPromptMessage('Please sign in or register to report a water issue.');
+        setAuthModalMode('login');
+        setIsAuthModalOpen(true);
+        setIsReportModalOpenState(false);
+        return;
+      }
+    }
+    setIsReportModalOpenState(open);
+  };
 
   // Sync to localStorage
   useEffect(() => {
@@ -815,6 +857,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // WORKFLOW: 10. REPORT CREATION (Unique ID format: WTR-2026-000001)
   const addReport = (data: Partial<Report>): Report => {
+    if (!isAuthenticated || !currentUser) {
+      addToast('Authentication required: Please sign in or register to submit a water report.', 'error');
+      openAuthModal('login', 'Please sign in or register to submit a water report.');
+      throw new Error('User must be authenticated to submit a report.');
+    }
+
     const reportIndex = reports.length + 1;
     const paddedNum = String(reportIndex).padStart(6, '0');
     const reportId = `WTR-2026-${paddedNum}`;
@@ -825,9 +873,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newReport: Report = {
       id: reportId,
       reportId: reportId,
-      citizenId: currentUser?.id || `usr-cit-${Date.now()}`,
-      citizenName: currentUser?.name || data.citizenName || 'Resident Citizen',
-      citizenPhone: currentUser?.phone || data.citizenPhone || '+91 98200 00000',
+      citizenId: currentUser.id,
+      citizenName: currentUser.name,
+      citizenPhone: currentUser.phone || data.citizenPhone || '+91 98200 00000',
       title: data.title || 'Water Issue in Mira-Bhayandar',
       description: data.description || '',
       category: cat,
@@ -836,7 +884,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       departmentName: 'Water Service Department',
       priority: data.priority || 'Medium',
       location: data.location || 'Mira Road, MBMC',
-      area: data.area || currentUser?.area || 'Mira Road East',
+      area: data.area || currentUser.area || 'Mira Road East',
       landmark: data.landmark,
       photo: data.photo || data.photoUrl,
       photoUrl: data.photoUrl || data.photo,
@@ -1289,8 +1337,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActivePage,
     selectedReportId,
     setSelectedReportId,
-    isReportModalOpen,
+    isReportModalOpen: isReportModalOpenState,
     setIsReportModalOpen,
+    isAuthModalOpen,
+    setIsAuthModalOpen,
+    authModalMode,
+    setAuthModalMode,
+    authPromptMessage,
+    setAuthPromptMessage,
+    openAuthModal,
+    closeAuthModal,
     reportCategoryPreset,
     setReportCategoryPreset,
     isAiAssistantOpen,
