@@ -71,9 +71,24 @@ export const OfficerDashboard: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Selected report for drawer/details (Requirement 16) - reactive with departmentReports
-  const [selectedReportId, setSelectedReportId] = useState<string | null>(
-    departmentReports[0]?.id || null
-  );
+  const [selectedReportId, setSelectedReportIdState] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('mbu_officer_selected_report') || departmentReports[0]?.id || null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const setSelectedReportId = (id: string | null) => {
+    setSelectedReportIdState(id);
+    try {
+      if (id) {
+        localStorage.setItem('mbu_officer_selected_report', id);
+      } else {
+        localStorage.removeItem('mbu_officer_selected_report');
+      }
+    } catch (e) {}
+  };
 
   const selectedReport = useMemo(() => {
     return (

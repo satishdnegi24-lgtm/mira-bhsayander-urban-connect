@@ -29,6 +29,22 @@ export type ReportStatus =
   | 'CLOSED'
   | 'REOPENED';
 
+export const VALID_REPORT_STATUSES: readonly ReportStatus[] = [
+  'SUBMITTED',
+  'AI_CLASSIFIED',
+  'OFFICER_REVIEW',
+  'WORKER_ASSIGNED',
+  'WORK_IN_PROGRESS',
+  'SOLVED',
+  'CITIZEN_VERIFICATION',
+  'CLOSED',
+  'REOPENED',
+] as const;
+
+export function isValidReportStatus(status: any): status is ReportStatus {
+  return typeof status === 'string' && VALID_REPORT_STATUSES.includes(status as ReportStatus);
+}
+
 export interface User {
   id: string; // uid
   name: string;
@@ -59,9 +75,51 @@ export interface Coordinates {
   lng: number;
 }
 
-export interface Report {
-  id: string; // e.g. "WTR-2026-000001"
+// Operational Real-World Water Issue (ONE issue for MULTIPLE citizen reports)
+export interface WaterIssue {
+  id: string; // e.g. "WTR-ISSUE-00025"
+  issueId: string;
+  category: ReportCategory;
+  priority: ReportPriority;
+  priorityReason?: string;
+  title: string;
+  description: string;
+  location: string;
+  area: string;
+  landmark?: string;
+  status: ReportStatus;
+  assignedWorkerId?: string;
+  assignedWorkerName?: string;
+  assignedByOfficerId?: string;
+  assignedByOfficerName?: string;
+  assignedAt?: string;
+  startedAt?: string;
+  solvedAt?: string;
+  closedAt?: string;
+  reopenedAt?: string;
+  reopenedBy?: string;
+  reopenReason?: string;
+  resolutionNotes?: string;
+  resolutionPhotoUrl?: string;
+  isSolved?: boolean;
+  citizenReportCount: number;
+  lastReportAt: string;
+  createdAt: string;
+  updatedAt: string;
+  citizenVerification?: {
+    status: 'Yes' | 'Partially' | 'No';
+    comment?: string;
+    verifiedAt: string;
+  };
+  departmentId?: string;
+  departmentName?: string;
+}
+
+// Individual Citizen Report / Evidence Submission
+export interface WaterReport {
+  id: string; // e.g. "WTR-REPORT-000101"
   reportId: string;
+  issueId: string; // Links to WaterIssue.issueId
   citizenId: string;
   citizenName: string;
   citizenPhone?: string;
@@ -71,7 +129,7 @@ export interface Report {
   aiSuggestedCategory?: ReportCategory;
   departmentId?: string; // "water"
   departmentName?: string; // "Water Service Department"
-  priority: ReportPriority;
+  priority?: ReportPriority;
   location: string;
   area: string;
   landmark?: string;
@@ -85,7 +143,7 @@ export interface Report {
   assignedByOfficerId?: string;
   assignedByOfficerName?: string;
   assignedAt?: string;
-  status: ReportStatus;
+  status?: ReportStatus;
   startedAt?: string;
   solvedAt?: string;
   closedAt?: string;
@@ -108,9 +166,24 @@ export interface Report {
   };
   isSolved?: boolean;
   reopenedAt?: string;
+  reopenedBy?: string;
+  reopenReason?: string;
+  hasFeedback?: boolean;
+  feedbackRating?: number;
+  feedbackComment?: string;
   syncedAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// Backward-compatible Report type
+export type Report = WaterReport;
+
+export interface DuplicateDetectionResult {
+  isLikelyDuplicate: boolean;
+  matchedIssueId: string | null;
+  confidence: number;
+  reason: string;
 }
 
 export interface ReportUpdate {

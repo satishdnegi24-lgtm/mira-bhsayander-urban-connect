@@ -19,8 +19,20 @@ service cloud.firestore {
       allow write: if true;
     }
 
-    // Civic Problem Reports
+    // Civic Problem Reports (Legacy & Synced)
     match /reports/{reportId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+
+    // Operational Real-World Water Issues (ONE issue for many citizen reports)
+    match /waterIssues/{issueId} {
+      allow read: if true;
+      allow create, update, delete: if true;
+    }
+
+    // Individual Citizen Reports / Evidence submissions
+    match /waterReports/{reportId} {
       allow read: if true;
       allow create, update, delete: if true;
     }

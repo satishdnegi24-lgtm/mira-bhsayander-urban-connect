@@ -298,7 +298,134 @@ Step 2: If the issue IS water-related, classify it accurately:
   }
 });
 
-// 2. AI Citizen Water Assistant Chatbot
+// Helper for deterministic duplicate matching fallback
+function deterministicMatch(newReport: any, candidateIssues: any[]) {
+  const norm = (s?: string) => (s || '').toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const reportLoc = norm(newReport.location);
+  const reportArea = norm(newReport.area);
+  const reportCat = newReport.category;
+
+  for (const iss of candidateIssues) {
+    if (iss.status === 'CLOSED') continue;
+    const issLoc = norm(iss.location);
+    const issArea = norm(iss.area);
+
+    const locOverlap =
+      (reportLoc && issLoc && (reportLoc.includes(issLoc) || issLoc.includes(reportLoc))) ||
+      (reportArea && issArea && reportArea === issArea && reportLoc && issLoc && reportLoc.split(' ').some((w: string) => w.length > 3 && issLoc.includes(w))) ||
+      ['kanakia', 'beverly', 'shanti', 'station', 'maxus', 'sheetal', 'silver park'].some(
+        (key) => (reportLoc.includes(key) || reportArea.includes(key)) && (issLoc.includes(key) || issArea.includes(key))
+      );
+
+    const sameCat = reportCat === iss.category;
+    const compatibleDamage =
+      (reportCat === 'Water Leakage' && iss.category === 'Pipeline Damage') ||
+      (reportCat === 'Pipeline Damage' && iss.category === 'Water Leakage');
+
+    if (locOverlap && (sameCat || compatibleDamage)) {
+      const categoryTerm = reportCat === 'Contaminated Water' ? 'suspected water contamination' : reportCat;
+      return {
+        isLikelyDuplicate: true,
+        matchedIssueId: iss.issueId,
+        confidence: sameCat ? 0.92 : 0.81,
+        reason: `Both reports describe ${categoryTerm} in ${newReport.location || newReport.area} within the same operational time window.`,
+      };
+    }
+  }
+
+  return {
+    isLikelyDuplicate: false,
+    matchedIssueId: null,
+    confidence: 0,
+    reason: 'Report appears to describe a distinct real-world water incident.',
+  };
+}
+
+// 2. AI Duplicate Water Issue Detection Endpoint
+app.post('/api/gemini/duplicate-detect', async (req, res) => {
+  const { newReport, candidateIssues } = req.body;
+  if (!newReport || !Array.isArray(candidateIssues) || candidateIssues.length === 0) {
+    return res.json({
+      isLikelyDuplicate: false,
+      matchedIssueId: null,
+      confidence: 0,
+      reason: 'No candidate issues to compare against.',
+    });
+  }
+
+  // Fallback if no Gemini AI configured
+  if (!ai || !process.env.GEMINI_API_KEY) {
+    return res.json(deterministicMatch(newReport, candidateIssues));
+  }
+
+  try {
+    const prompt = `You are the Senior Operations AI for the Water Service Department of Mira-Bhayandar Municipal Corporation (MBMC).
+The goal is to prevent duplicate operational work orders by determining whether a newly submitted citizen water complaint describes the SAME REAL-WORLD WATER INCIDENT as an existing open Water Issue.
+
+New Citizen Complaint:
+- Title: "${newReport.title || 'N/A'}"
+- Category: "${newReport.category}"
+- Location: "${newReport.location}"
+- Area: "${newReport.area}"
+- Landmark: "${newReport.landmark || 'N/A'}"
+- Description: "${newReport.description}"
+- Submitted At: "${newReport.createdAt || 'Recent'}"
+
+Active Open Water Issues:
+${candidateIssues
+  .map(
+    (iss: any, idx: number) => `
+[Issue #${idx + 1}] ID: ${iss.issueId}
+- Category: ${iss.category}
+- Location: ${iss.location}
+- Area: ${iss.area}
+- Landmark: ${iss.landmark || 'N/A'}
+- Description: ${iss.description}
+- Status: ${iss.status}
+- Existing Citizen Reports: ${iss.citizenReportCount || 1}
+- Created: ${iss.createdAt}`
+  )
+  .join('\n')}
+
+Rules for Duplicate Detection:
+1. Two complaints are DUPLICATES if they describe the SAME real-world physical water event (e.g., both describe suspected water contamination in Kanakia Park, or both report pipeline rupture on Station Road).
+2. Different locations (e.g. Kanakia Park vs Maxus Mall Bhayandar) are NOT duplicates.
+3. Different unrelated water categories at the same general area (e.g. low household pressure in flat A vs heavy pipeline leak on street) are NOT duplicates unless they clearly describe the exact same event.
+4. Do NOT assert scientifically that water is contaminated; use objective phrases such as "suspected water contamination" or "discolored water reported".
+5. If confidence >= 0.75, set isLikelyDuplicate = true and matchedIssueId to the matching Issue ID. Otherwise set isLikelyDuplicate = false and matchedIssueId = null.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            isLikelyDuplicate: { type: Type.BOOLEAN },
+            matchedIssueId: { type: Type.STRING },
+            confidence: { type: Type.NUMBER },
+            reason: { type: Type.STRING },
+          },
+          required: ['isLikelyDuplicate', 'confidence', 'reason'],
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '{}');
+    return res.json({
+      isLikelyDuplicate: Boolean(parsed.isLikelyDuplicate && parsed.matchedIssueId),
+      matchedIssueId: parsed.isLikelyDuplicate ? parsed.matchedIssueId : null,
+      confidence: parsed.confidence || 0.85,
+      reason: parsed.reason || 'Evaluated by Water Department Operations AI.',
+    });
+  } catch (err: any) {
+    console.error('Gemini duplicate detect error:', err);
+    return res.json(deterministicMatch(newReport, candidateIssues));
+  }
+});
+
+// 3. AI Citizen Water Assistant Chatbot
 app.post('/api/gemini/chat', async (req, res) => {
   const { message, history, mode = 'general' } = req.body;
   if (!message) {

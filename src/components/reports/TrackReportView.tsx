@@ -92,8 +92,15 @@ export const TrackReportView: React.FC<{ onOpenFeedback: (reportId: string) => v
   const [verificationError, setVerificationError] = useState<string | null>(null);
 
   const currentReport =
-    reports.find((r) => r.id.toLowerCase() === (selectedReportId || '').toLowerCase()) ||
-    reports[0];
+    (selectedReportId
+      ? reports.find(
+          (r) =>
+            r.id.toLowerCase() === selectedReportId.toLowerCase() ||
+            (r.reportId && r.reportId.toLowerCase() === selectedReportId.toLowerCase())
+        )
+      : null) ||
+    reports[0] ||
+    null;
 
   const reportUpdates = updates.filter((u) => u.reportId === currentReport?.id);
   const reportFeedback = feedbacks.find((f) => f.reportId === currentReport?.id);
