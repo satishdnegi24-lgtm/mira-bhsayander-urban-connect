@@ -266,6 +266,10 @@ export const OfficerDashboard: React.FC = () => {
   // Direct status override
   const handleDirectStatusChange = async (newStatus: ReportStatus) => {
     if (!selectedReport) return;
+    if (newStatus === 'CLOSED') {
+      alert('Citizen verification is required before this issue can be closed. Officers cannot directly close issues.');
+      return;
+    }
     if (newStatus === 'WORK_IN_PROGRESS') {
       await startWorkOnReport(selectedReport.id);
     } else if (newStatus === 'SOLVED') {
@@ -514,10 +518,10 @@ export const OfficerDashboard: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-3 px-3 whitespace-nowrap">
-                          <PriorityBadge priority={report.priority} size="sm" />
+                          <PriorityBadge priority={report.priority || 'Medium'} size="sm" />
                         </td>
                         <td className="py-3 px-3 whitespace-nowrap">
-                          <StatusBadge status={report.status} size="sm" />
+                          <StatusBadge status={report.status || 'SUBMITTED'} size="sm" />
                         </td>
                         <td className="py-3 px-3 whitespace-nowrap">
                           {report.assignedWorkerName ? (
@@ -584,8 +588,8 @@ export const OfficerDashboard: React.FC = () => {
                     <span className="font-mono text-sm font-bold text-blue-700">
                       {selectedReport.id}
                     </span>
-                    <StatusBadge status={selectedReport.status} size="sm" />
-                    <PriorityBadge priority={selectedReport.priority} size="sm" />
+                    <StatusBadge status={selectedReport.status || 'SUBMITTED'} size="sm" />
+                    <PriorityBadge priority={selectedReport.priority || 'Medium'} size="sm" />
                   </div>
                   <h3 className="text-base font-bold text-slate-900 leading-snug">
                     {selectedReport.title}
@@ -641,7 +645,7 @@ export const OfficerDashboard: React.FC = () => {
                       Consolidated Water Issue
                     </span>
                     <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-200 text-blue-900">
-                      {linkedCitizenReports.length > 0 ? linkedCitizenReports.length : (selectedReport.citizenReportCount || 1)} Citizen Report{(linkedCitizenReports.length > 1 || (selectedReport.citizenReportCount || 1) > 1) ? 's' : ''}
+                      {linkedCitizenReports.length > 0 ? linkedCitizenReports.length : ((selectedReport as any).citizenReportCount || 1)} Citizen Report{(linkedCitizenReports.length > 1 || ((selectedReport as any).citizenReportCount || 1) > 1) ? 's' : ''}
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-600">
@@ -754,7 +758,7 @@ export const OfficerDashboard: React.FC = () => {
                   <button
                     onClick={() => {
                       setEditCategory(selectedReport.category);
-                      setEditPriority(selectedReport.priority);
+                      setEditPriority(selectedReport.priority || 'Medium');
                       setIsEditModalOpen(true);
                     }}
                     className="py-2 px-2.5 rounded-lg border border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold transition-colors flex items-center justify-center gap-1.5"
@@ -837,7 +841,7 @@ export const OfficerDashboard: React.FC = () => {
                         Awaiting Citizen Verification
                       </span>
                       <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-bold">
-                        {linkedFeedbacks.length} of {linkedCitizenReports.length > 0 ? linkedCitizenReports.length : (selectedReport.citizenReportCount || 1)} Completed
+                        {linkedFeedbacks.length} of {linkedCitizenReports.length > 0 ? linkedCitizenReports.length : ((selectedReport as any).citizenReportCount || 1)} Completed
                       </span>
                     </div>
                     <p className="text-[11px] text-amber-800 leading-relaxed">
@@ -850,22 +854,30 @@ export const OfficerDashboard: React.FC = () => {
                         <span className="text-[10px] uppercase font-bold text-amber-950 block">
                           Submitted Citizen Verifications:
                         </span>
-                        {linkedFeedbacks.map((fb) => (
-                          <div key={fb.id} className="p-2 bg-white rounded-md border border-amber-200 text-[11px] space-y-0.5">
-                            <div className="flex items-center justify-between">
-                              <span className="font-semibold text-slate-800">{fb.citizenName || 'Citizen'}</span>
-                              <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                                fb.resolutionStatus === 'Yes' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
-                              }`}>
-                                {fb.resolutionStatus === 'Yes' ? 'Verified Resolved' : 'Not Resolved'}
-                              </span>
+                        {linkedFeedbacks.map((fb) => {
+                          const isYes = fb.resolutionStatus === 'Yes' || fb.verificationResponse === 'YES_SOLVED';
+                          const isPartially = fb.resolutionStatus === 'Partially' || fb.verificationResponse === 'PARTIALLY_SOLVED';
+                          return (
+                            <div key={fb.id} className="p-2 bg-white rounded-md border border-amber-200 text-[11px] space-y-0.5">
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-slate-800">{fb.citizenName || 'Citizen'}</span>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                                  isYes
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : isPartially
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-rose-100 text-rose-800'
+                                }`}>
+                                  {isYes ? 'Yes, Solved' : isPartially ? 'Partially Solved' : 'Not Solved'}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-amber-600 flex items-center gap-1">
+                                Rating: {'★'.repeat(fb.rating)}{'☆'.repeat(5 - fb.rating)} ({fb.rating}/5)
+                              </div>
+                              {fb.comment && <p className="text-slate-600 text-[10px] italic">"{fb.comment}"</p>}
                             </div>
-                            <div className="text-[10px] text-amber-600 flex items-center gap-1">
-                              Rating: {'★'.repeat(fb.rating)}{'☆'.repeat(5 - fb.rating)} ({fb.rating}/5)
-                            </div>
-                            {fb.comment && <p className="text-slate-600 text-[10px] italic">"{fb.comment}"</p>}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>

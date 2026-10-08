@@ -105,7 +105,7 @@ export const TrackReportView: React.FC<{ onOpenFeedback: (reportId: string) => v
   const reportUpdates = updates.filter((u) => u.reportId === currentReport?.id);
   const reportFeedback = feedbacks.find((f) => f.reportId === currentReport?.id);
 
-  const currentStepIndex = currentReport ? getTimelineIndex(currentReport.status) : 0;
+  const currentStepIndex = currentReport ? getTimelineIndex(currentReport.status || 'SUBMITTED') : 0;
   const isReopened = currentReport?.status === 'REOPENED';
   const isAwaitingVerification =
     currentReport?.status === 'SOLVED' || currentReport?.status === 'CITIZEN_VERIFICATION';
@@ -225,8 +225,8 @@ export const TrackReportView: React.FC<{ onOpenFeedback: (reportId: string) => v
                     <span className="font-mono text-base font-bold text-blue-700">
                       {currentReport.id}
                     </span>
-                    <StatusBadge status={currentReport.status} size="sm" />
-                    <PriorityBadge priority={currentReport.priority} size="sm" />
+                    <StatusBadge status={currentReport.status || 'SUBMITTED'} size="sm" />
+                    <PriorityBadge priority={currentReport.priority || 'Medium'} size="sm" />
                     {isReopened && (
                       <span className="px-2 py-0.5 rounded text-xs font-bold bg-rose-100 text-rose-800 flex items-center gap-1">
                         <RotateCcw className="w-3 h-3" />

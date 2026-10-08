@@ -42,6 +42,8 @@ import {
   seedInitialFirestoreData,
   persistReportStatusChange,
   persistWaterIssueStatusChange,
+  updateWaterIssueInFirestore,
+  submitCitizenVerificationFeedback,
   submitCitizenWaterReport,
   syncAndMigrateExistingData,
 } from '../lib/firebase';
@@ -113,8 +115,9 @@ interface AppContextType {
   markReportSolved: (reportId: string, resolutionDescription: string, resolutionPhotoUrl?: string) => Promise<void> | void;
   verifyCitizenResolution: (
     reportId: string,
-    status: 'Yes' | 'Partially' | 'No',
-    comment?: string
+    status: 'Yes' | 'Partially' | 'No' | 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED',
+    comment?: string,
+    rating?: number
   ) => Promise<void> | void;
   updatePriority: (reportId: string, newPriority: ReportPriority) => void;
   updateCategory: (reportId: string, newCategory: ReportCategory) => void;
@@ -457,6 +460,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setIsFirebaseConnected(true);
       if (Array.isArray(newIssues)) {
         setWaterIssues(newIssues);
+        // Synchronize reports in state so all consumers immediately reflect WaterIssue operational status
+        setReports((prev) =>
+          prev.map((r) => {
+            const matched = newIssues.find(
+              (i) => i.issueId === r.issueId || i.id === r.issueId || i.issueId === r.id || i.id === r.id
+            );
+            if (matched) {
+              return {
+                ...r,
+                status: matched.status,
+                isSolved: matched.status === 'CLOSED',
+                closedAt: matched.closedAt ?? r.closedAt,
+                reopenedAt: matched.reopenedAt ?? r.reopenedAt,
+                reopenReason: matched.reopenReason ?? r.reopenReason,
+              };
+            }
+            return r;
+          })
+        );
       }
     });
 
@@ -622,18 +644,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return id;
   };
 
-  // All reports belong to Water Service Department
-  const departmentReports = reports;
+  // All reports belong to Water Service Department - operational status is read directly from underlying Water Issue
+  const departmentReports = useMemo(() => {
+    return reports.map((r) => {
+      const issue = r.issueId
+        ? waterIssues.find((i) => i.issueId === r.issueId || i.id === r.issueId)
+        : waterIssues.find((i) => i.id === r.id || i.issueId === r.id);
+      if (issue) {
+        return {
+          ...r,
+          status: issue.status,
+          isSolved: issue.isSolved ?? (issue.status === 'CLOSED'),
+          closedAt: issue.closedAt ?? r.closedAt,
+          reopenedAt: issue.reopenedAt ?? r.reopenedAt,
+          reopenReason: issue.reopenReason ?? r.reopenReason,
+          assignedWorkerId: issue.assignedWorkerId ?? r.assignedWorkerId,
+          assignedWorkerName: issue.assignedWorkerName ?? r.assignedWorkerName,
+        };
+      }
+      return r;
+    });
+  }, [reports, waterIssues]);
 
-  // Reports filed by the logged-in citizen
+  // Reports filed by the logged-in citizen - status synchronized with underlying Water Issue
   const citizenReports = useMemo(() => {
     if (!currentUser) return [];
-    return reports.filter(
+    const list = reports.filter(
       (r) =>
         r.citizenId === currentUser.id ||
         (r.citizenName && r.citizenName.toLowerCase() === currentUser.name.toLowerCase())
     );
-  }, [reports, currentUser]);
+    return list.map((r) => {
+      const issue = r.issueId
+        ? waterIssues.find((i) => i.issueId === r.issueId || i.id === r.issueId)
+        : waterIssues.find((i) => i.id === r.id || i.issueId === r.id);
+      if (issue) {
+        return {
+          ...r,
+          status: issue.status,
+          isSolved: issue.isSolved ?? (issue.status === 'CLOSED'),
+          closedAt: issue.closedAt ?? r.closedAt,
+          reopenedAt: issue.reopenedAt ?? r.reopenedAt,
+          reopenReason: issue.reopenReason ?? r.reopenReason,
+        };
+      }
+      return r;
+    });
+  }, [reports, waterIssues, currentUser]);
 
   // Water Department Workers
   const departmentWorkers = workers;
@@ -1364,31 +1421,72 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // WORKFLOW: 21. CITIZEN VERIFICATION
   const verifyCitizenResolution = async (
     reportId: string,
-    status: 'Yes' | 'Partially' | 'No',
-    comment?: string
+    status: 'Yes' | 'Partially' | 'No' | 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED',
+    comment?: string,
+    rating?: number
   ) => {
     const rep = reports.find((r) => r.id === reportId || r.reportId === reportId);
-    const issueId = rep?.issueId || 'WTR-ISSUE-00025';
+    const issueId = rep?.issueId || resolveTargetIssueId(reportId) || 'WTR-ISSUE-00025';
 
-    if (status === 'Partially' || status === 'No') {
-      const res = await submitCitizenVerificationFeedback({
-        issueId,
-        reportId,
-        citizenId: currentUser?.id || rep?.citizenId || 'citizen',
-        citizenName: currentUser?.name || rep?.citizenName || 'Citizen',
-        resolutionStatus: status,
-        rating: 1,
-        comment: comment || 'Citizen indicated water issue is not resolved.',
-      });
+    const raw = (status || 'Yes').toString().toUpperCase();
+    const isYes = raw === 'YES' || raw === 'YES_SOLVED' || raw === 'RESOLVED';
+    const isPartially = raw === 'PARTIALLY' || raw === 'PARTIALLY_SOLVED';
+    const canonical = isYes ? 'YES_SOLVED' : (isPartially ? 'PARTIALLY_SOLVED' : 'NOT_SOLVED');
 
-      if (res.issue) {
-        setWaterIssues((prev) => prev.map((i) => (i.issueId === res.issue!.issueId ? res.issue! : i)));
-        setReports((prev) => prev.map((r) => (r.issueId === res.issue!.issueId ? { ...r, status: 'REOPENED' } : r)));
-      }
+    const res = await submitCitizenVerificationFeedback({
+      issueId,
+      reportId,
+      citizenId: currentUser?.id || rep?.citizenId || 'citizen',
+      citizenName: currentUser?.name || rep?.citizenName || 'Citizen',
+      resolutionStatus: canonical,
+      rating: rating || (isYes ? 5 : 1),
+      comment:
+        comment?.trim() ||
+        (isYes ? 'Resolution confirmed by citizen.' : 'Citizen indicated water issue is not resolved.'),
+    });
 
+    if (res.issue) {
+      setWaterIssues((prev) => prev.map((i) => (i.issueId === res.issue!.issueId ? res.issue! : i)));
+      setReports((prev) =>
+        prev.map((r) =>
+          r.issueId === res.issue!.issueId || r.id === reportId
+            ? {
+                ...r,
+                status: res.issue!.status,
+                isSolved: res.issue!.status === 'CLOSED',
+                closedAt: res.issue!.closedAt ?? r.closedAt,
+                reopenedAt: res.issue!.reopenedAt ?? r.reopenedAt,
+                reopenReason: res.issue!.reopenReason ?? r.reopenReason,
+              }
+            : r
+        )
+      );
+      setWaterReports((prev) =>
+        prev.map((r) =>
+          r.issueId === res.issue!.issueId || r.id === reportId
+            ? {
+                ...r,
+                status: res.issue!.status,
+                isSolved: res.issue!.status === 'CLOSED',
+                closedAt: res.issue!.closedAt ?? r.closedAt,
+                reopenedAt: res.issue!.reopenedAt ?? r.reopenedAt,
+                reopenReason: res.issue!.reopenReason ?? r.reopenReason,
+              }
+            : r
+        )
+      );
+    }
+
+    if (res.feedback) {
+      setFeedbacks((prev) => [res.feedback, ...prev.filter((f) => f.id !== res.feedback.id)]);
+    }
+
+    if (res.issue?.status === 'CLOSED') {
+      addToast('Verification recorded: Water issue marked as CLOSED.', 'success');
+    } else if (res.issue?.status === 'REOPENED') {
       addToast('Issue marked as unresolved and reopened for officer review.', 'info');
-    } else {
-      addToast('Please complete the rating and verification feedback to confirm closure.', 'info');
+    } else if (res.issue?.status === 'CITIZEN_VERIFICATION') {
+      addToast(`Verification recorded (${res.verificationsCount} of ${res.verificationsTotal} completed). Awaiting remaining citizen verification.`, 'info');
     }
   };
 
@@ -1471,19 +1569,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Comment added successfully', 'success');
   };
 
-  // Add Feedback / Verification with Multi-Citizen Support (Requirements: Verification required before closure)
+  // Add Feedback / Verification with Multi-Citizen Support
   const addFeedback = async (feedback: Omit<ReportFeedback, 'id' | 'createdAt'>) => {
     const rep = reports.find((r) => r.id === feedback.reportId || r.reportId === feedback.reportId);
-    const issueId = rep?.issueId || feedback.issueId || 'WTR-ISSUE-00025';
+    const issueId = rep?.issueId || feedback.issueId || resolveTargetIssueId(feedback.reportId) || 'WTR-ISSUE-00025';
+
+    const raw = (feedback.resolutionStatus || feedback.verificationResponse || 'Yes').toString().toUpperCase();
+    const isYes = raw === 'YES' || raw === 'YES_SOLVED' || raw === 'RESOLVED';
+    const canonical = isYes ? 'YES_SOLVED' : (raw === 'PARTIALLY' || raw === 'PARTIALLY_SOLVED' ? 'PARTIALLY_SOLVED' : 'NOT_SOLVED');
 
     const result = await submitCitizenVerificationFeedback({
       issueId,
       reportId: feedback.reportId,
       citizenId: feedback.citizenId || currentUser?.id || 'citizen',
       citizenName: feedback.citizenName || currentUser?.name || 'Resident Citizen',
-      resolutionStatus: feedback.resolutionStatus || 'Yes',
-      rating: feedback.rating || 5,
-      comment: feedback.comment || 'Issue verified by citizen.',
+      resolutionStatus: canonical,
+      rating: feedback.rating || (isYes ? 5 : 1),
+      comment:
+        feedback.comment ||
+        (isYes ? 'Issue verified by citizen.' : 'Citizen indicated water issue is not resolved.'),
     });
 
     setFeedbacks((prev) => [result.feedback, ...prev.filter((f) => f.id !== result.feedback.id)]);
@@ -1496,6 +1600,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ? {
                 ...r,
                 status: result.issue!.status,
+                isSolved: result.issue!.status === 'CLOSED',
+                closedAt: result.issue!.closedAt ?? r.closedAt,
+                reopenedAt: result.issue!.reopenedAt ?? r.reopenedAt,
+                reopenReason: result.issue!.reopenReason ?? r.reopenReason,
+                hasFeedback: r.id === feedback.reportId ? true : r.hasFeedback,
+                feedbackRating: r.id === feedback.reportId ? feedback.rating : r.feedbackRating,
+                feedbackComment: r.id === feedback.reportId ? feedback.comment : r.feedbackComment,
+              }
+            : r
+        )
+      );
+      setWaterReports((prev) =>
+        prev.map((r) =>
+          r.issueId === result.issue!.issueId || r.id === feedback.reportId
+            ? {
+                ...r,
+                status: result.issue!.status,
+                isSolved: result.issue!.status === 'CLOSED',
+                closedAt: result.issue!.closedAt ?? r.closedAt,
+                reopenedAt: result.issue!.reopenedAt ?? r.reopenedAt,
+                reopenReason: result.issue!.reopenReason ?? r.reopenReason,
                 hasFeedback: r.id === feedback.reportId ? true : r.hasFeedback,
                 feedbackRating: r.id === feedback.reportId ? feedback.rating : r.feedbackRating,
                 feedbackComment: r.id === feedback.reportId ? feedback.comment : r.feedbackComment,
@@ -1505,12 +1630,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
-    if (result.allVerificationsCompleted) {
-      addToast('All citizen verifications completed! Water issue officially closed.', 'success');
+    if (result.issue?.status === 'CLOSED') {
+      addToast('Citizen verification completed! Water issue officially closed.', 'success');
     } else if (result.issue?.status === 'REOPENED') {
       addToast('Issue reported as unresolved and reopened for officer review.', 'info');
-    } else {
-      addToast(`Verification recorded (${result.verificationsCount} of ${result.verificationsTotal} completed). Awaiting remaining responses.`, 'info');
+    } else if (result.issue?.status === 'CITIZEN_VERIFICATION') {
+      addToast(`Verification recorded (${result.verificationsCount} of ${result.verificationsTotal} completed). Awaiting remaining citizen verification.`, 'info');
     }
   };
 
@@ -1534,9 +1659,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     logout,
     signInWithGoogleAuth,
     isFirebaseConnected,
-    reports,
+    reports: departmentReports,
     waterIssues,
-    waterReports,
+    waterReports: departmentReports,
     departmentReports,
     departmentIssues,
     citizenReports,

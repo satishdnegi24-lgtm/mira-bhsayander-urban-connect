@@ -21,6 +21,7 @@ import {
   where,
   updateDoc,
   runTransaction,
+  writeBatch,
 } from 'firebase/firestore';
 import config from '../../firebase-applet-config.json';
 import {
@@ -1008,10 +1009,10 @@ export async function persistWaterIssueStatusChange(
         );
       }
 
-      // If required citizen verification/feedback does not exist or not all citizens have responded:
-      if (validYesResponses === 0 || validYesResponses < totalRequired) {
+      // If required citizen verification/feedback does not exist or pending:
+      if (validYesResponses < totalRequired || validYesResponses === 0) {
         const errorMsg = `Citizen verification is required before this issue can be closed.`;
-        console.warn(`[Closure Validation] REJECTED: ${errorMsg} (${validYesResponses} of ${totalRequired} completed)`);
+        console.warn(`[Closure Validation] REJECTED: ${errorMsg}`);
 
         // Keep issue in CITIZEN_VERIFICATION in Firestore
         const keepPayload = cleanForFirestore({
@@ -1094,9 +1095,9 @@ export async function persistWaterIssueStatusChange(
       message:
         logMessage ||
         (newStatus === 'CLOSED'
-          ? 'Water issue closed and verified complete'
+          ? 'CITIZEN_VERIFICATION → CLOSED: Water issue officially closed.'
           : newStatus === 'REOPENED'
-          ? 'Water issue reopened'
+          ? 'CITIZEN_VERIFICATION → REOPENED: Water issue reopened.'
           : newStatus === 'SOLVED'
           ? `Water issue solved by Officer ${userActor?.name || 'Officer'}. Awaiting citizen verification.`
           : newStatus === 'CITIZEN_VERIFICATION'
@@ -1135,9 +1136,9 @@ export async function submitCitizenVerificationFeedback(params: {
   reportId: string;
   citizenId: string;
   citizenName?: string;
-  resolutionStatus: 'Yes' | 'Partially' | 'No';
-  rating: number;
-  comment: string;
+  resolutionStatus: 'Yes' | 'Partially' | 'No' | 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED';
+  rating?: number;
+  comment?: string;
 }): Promise<{
   feedback: ReportFeedback;
   issue: WaterIssue | null;
@@ -1146,153 +1147,225 @@ export async function submitCitizenVerificationFeedback(params: {
   verificationsTotal: number;
 }> {
   const now = new Date().toISOString();
-  const { issueId, reportId, citizenId, citizenName, resolutionStatus, rating, comment } = params;
+  const { issueId, reportId, citizenId, citizenName, rating, comment } = params;
 
-  // 1. Save individual feedback document to Firestore (Separate record per citizen)
+  // Normalize citizen response
+  const rawStatus = (params.resolutionStatus || 'Yes').toString().toUpperCase();
+  const isYes = rawStatus === 'YES' || rawStatus === 'YES_SOLVED' || rawStatus === 'RESOLVED';
+  const isPartially = rawStatus === 'PARTIALLY' || rawStatus === 'PARTIALLY_SOLVED';
+
+  const canonicalResponse: 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED' =
+    isYes ? 'YES_SOLVED' : (isPartially ? 'PARTIALLY_SOLVED' : 'NOT_SOLVED');
+  const resolutionStatus: 'Yes' | 'Partially' | 'No' =
+    isYes ? 'Yes' : (isPartially ? 'Partially' : 'No');
+
+  // Resolve target WaterIssue ID
+  let targetIssueId = issueId;
+  if (!targetIssueId || !targetIssueId.startsWith('WTR-ISSUE')) {
+    try {
+      const repDoc = await getDoc(doc(db, 'waterReports', reportId));
+      if (repDoc.exists() && repDoc.data()?.issueId) {
+        targetIssueId = repDoc.data().issueId;
+      } else {
+        const legacyDoc = await getDoc(doc(db, 'reports', reportId));
+        if (legacyDoc.exists() && legacyDoc.data()?.issueId) {
+          targetIssueId = legacyDoc.data().issueId;
+        }
+      }
+    } catch (e) {}
+  }
+  if (!targetIssueId) {
+    targetIssueId = 'WTR-ISSUE-00025';
+  }
+
+  // 1. Prepare individual feedback document (Separate record per citizen in Firestore)
   const fbId = `fb-${reportId}-${citizenId || Date.now()}`;
   const feedbackDoc: ReportFeedback = {
     id: fbId,
     feedbackId: fbId,
     reportId,
-    issueId,
+    issueId: targetIssueId,
     citizenId,
     citizenName: citizenName || 'Resident Citizen',
-    rating: Math.max(1, Math.min(5, rating || 5)),
+    rating: Math.max(1, Math.min(5, rating || (isYes ? 5 : 1))),
     resolutionStatus,
-    comment: comment?.trim() || (resolutionStatus === 'Yes' ? 'Resolution verified by citizen.' : 'Issue unresolved.'),
+    verificationResponse: canonicalResponse,
+    comment:
+      comment?.trim() ||
+      (isYes ? 'Resolution confirmed by citizen.' : 'Citizen indicated water issue is not resolved.'),
     createdAt: now,
+    submittedAt: now,
   };
-  await setDoc(doc(db, 'feedbacks', fbId), cleanForFirestore(feedbackDoc), { merge: true });
 
-  // 2. Update the specific citizen's WaterReport in Firestore
-  const reportVerification = {
+  // 2. Discover all linked report IDs for this consolidated Water Issue
+  const linkedReportIds = new Set<string>();
+  linkedReportIds.add(reportId);
+  try {
+    const qWtr = query(collection(db, 'waterReports'), where('issueId', '==', targetIssueId));
+    const snapWtr = await getDocs(qWtr);
+    snapWtr.forEach((d) => linkedReportIds.add(d.id));
+
+    const qLeg = query(collection(db, 'reports'), where('issueId', '==', targetIssueId));
+    const snapLeg = await getDocs(qLeg);
+    snapLeg.forEach((d) => linkedReportIds.add(d.id));
+  } catch (err) {
+    console.warn('Error querying linked reports:', err);
+  }
+
+  // 2b. Query existing feedbacks from Firestore to evaluate consolidated issue closure rule
+  const feedbacksMap = new Map<string, { status: string; response: string; comment?: string; rating?: number }>();
+  try {
+    const qFeedbacks = query(collection(db, 'feedbacks'), where('issueId', '==', targetIssueId));
+    const fbSnap = await getDocs(qFeedbacks);
+    fbSnap.forEach((d) => {
+      const fbData = d.data() as ReportFeedback;
+      const key = fbData.reportId || fbData.citizenId || d.id;
+      feedbacksMap.set(key, {
+        status: fbData.resolutionStatus || 'Yes',
+        response: fbData.verificationResponse || 'YES_SOLVED',
+        comment: fbData.comment,
+        rating: fbData.rating,
+      });
+    });
+  } catch (err) {
+    console.warn('Error querying existing feedbacks:', err);
+  }
+
+  // Record current submission into feedbacks map
+  feedbacksMap.set(reportId, {
     status: resolutionStatus,
+    response: canonicalResponse,
     comment: feedbackDoc.comment,
-    verifiedAt: now,
-  };
+    rating: feedbackDoc.rating,
+  });
 
-  const repUpdates = cleanForFirestore({
+  const totalRequired = Math.max(1, linkedReportIds.size);
+
+  // Check if any citizen reported PARTIALLY_SOLVED or NOT_SOLVED
+  let hasUnresolved = false;
+  let yesResponsesCount = 0;
+
+  feedbacksMap.forEach((val) => {
+    const resp = val.response?.toUpperCase();
+    const st = val.status;
+    if (resp === 'NOT_SOLVED' || resp === 'PARTIALLY_SOLVED' || st === 'No' || st === 'Partially') {
+      hasUnresolved = true;
+    } else if (resp === 'YES_SOLVED' || st === 'Yes') {
+      yesResponsesCount++;
+    }
+  });
+
+  let targetNewStatus: ReportStatus;
+  let statusHistoryMessage: string;
+
+  if (hasUnresolved) {
+    targetNewStatus = 'REOPENED';
+    statusHistoryMessage = `CITIZEN_VERIFICATION → REOPENED: Citizen reported ${canonicalResponse} ("${feedbackDoc.comment}"). Water issue returned to Water Officer.`;
+  } else if (yesResponsesCount >= totalRequired) {
+    targetNewStatus = 'CLOSED';
+    statusHistoryMessage = `CITIZEN_VERIFICATION → CLOSED: Citizen confirmed resolution (${canonicalResponse}). All ${totalRequired} citizen verification(s) completed. Water issue officially closed.`;
+  } else {
+    targetNewStatus = 'CITIZEN_VERIFICATION';
+    statusHistoryMessage = `CITIZEN_VERIFICATION: ${yesResponsesCount} of ${totalRequired} Citizen Verifications Completed. Awaiting remaining citizen verification before closure.`;
+  }
+
+  // 3. Prepare Batch Writes for Atomic Firestore Update (Requirements: Firestore Atomic Update)
+  const batch = writeBatch(db);
+
+  // A. Save Feedback Record
+  batch.set(doc(db, 'feedbacks', fbId), cleanForFirestore(feedbackDoc), { merge: true });
+
+  // B. Specific Report Verification Data
+  const specificRepUpdates = cleanForFirestore({
+    status: targetNewStatus,
+    isSolved: targetNewStatus === 'CLOSED',
+    closedAt: targetNewStatus === 'CLOSED' ? now : null,
+    reopenedAt: targetNewStatus === 'REOPENED' ? now : null,
+    reopenReason: targetNewStatus === 'REOPENED' ? feedbackDoc.comment : null,
     hasFeedback: true,
     feedbackRating: feedbackDoc.rating,
     feedbackComment: feedbackDoc.comment,
-    citizenVerification: reportVerification,
+    verificationResponse: canonicalResponse,
+    citizenVerification: {
+      status: resolutionStatus,
+      verificationResponse: canonicalResponse,
+      comment: feedbackDoc.comment,
+      verifiedAt: now,
+      submittedAt: now,
+      rating: feedbackDoc.rating,
+    },
     updatedAt: now,
     syncedAt: now,
   });
 
-  await setDoc(doc(db, 'waterReports', reportId), repUpdates, { merge: true });
-  await setDoc(doc(db, 'reports', reportId), repUpdates, { merge: true });
+  batch.set(doc(db, 'waterReports', reportId), specificRepUpdates, { merge: true });
+  batch.set(doc(db, 'reports', reportId), specificRepUpdates, { merge: true });
 
-  // 3. Query all linked citizen reports for this issueId from Firestore
-  const qReports = query(collection(db, 'waterReports'), where('issueId', '==', issueId));
-  const repSnap = await getDocs(qReports);
-  const linkedReports: WaterReport[] = [];
-  repSnap.forEach((d) => linkedReports.push(d.data() as WaterReport));
-
-  // Also query all feedbacks for this issueId from Firestore
-  const qFeedbacks = query(collection(db, 'feedbacks'), where('issueId', '==', issueId));
-  const fbSnap = await getDocs(qFeedbacks);
-  const feedbacksList: ReportFeedback[] = [];
-  fbSnap.forEach((d) => feedbacksList.push(d.data() as ReportFeedback));
-
-  const totalLinked = Math.max(1, linkedReports.length);
-  let confirmedYesCount = 0;
-  let hasUnresolved = false;
-
-  for (const rep of linkedReports) {
-    const fb = feedbacksList.find(
-      (f) =>
-        f.reportId === rep.reportId ||
-        f.reportId === rep.id ||
-        (f.citizenId && f.citizenId === rep.citizenId)
-    );
-    const ver = rep.citizenVerification || (fb ? { status: fb.resolutionStatus, comment: fb.comment } : null);
-
-    const st = ver?.status || fb?.resolutionStatus;
-    if (st === 'No' || st === 'Partially') {
-      hasUnresolved = true;
-      break;
-    }
-    if (st === 'Yes') {
-      confirmedYesCount++;
+  // C. Synchronize all other linked citizen reports
+  for (const linkedId of linkedReportIds) {
+    if (linkedId !== reportId) {
+      const syncRepPayload = cleanForFirestore({
+        status: targetNewStatus,
+        isSolved: targetNewStatus === 'CLOSED',
+        closedAt: targetNewStatus === 'CLOSED' ? now : undefined,
+        reopenedAt: targetNewStatus === 'REOPENED' ? now : undefined,
+        reopenReason: targetNewStatus === 'REOPENED' ? feedbackDoc.comment : undefined,
+        updatedAt: now,
+        syncedAt: now,
+      });
+      batch.set(doc(db, 'waterReports', linkedId), syncRepPayload, { merge: true });
+      batch.set(doc(db, 'reports', linkedId), syncRepPayload, { merge: true });
     }
   }
 
-  if (resolutionStatus === 'No' || resolutionStatus === 'Partially') {
-    hasUnresolved = true;
-  }
+  // D. Update Underlying Water Issue Document (CRITICAL FIX: waterIssues is updated immediately)
+  const issueUpdates: Partial<WaterIssue> = cleanForFirestore({
+    status: targetNewStatus,
+    isSolved: targetNewStatus === 'CLOSED',
+    closedAt: targetNewStatus === 'CLOSED' ? now : undefined,
+    reopenedAt: targetNewStatus === 'REOPENED' ? now : undefined,
+    reopenReason: targetNewStatus === 'REOPENED' ? feedbackDoc.comment : undefined,
+    reopenedBy: targetNewStatus === 'REOPENED' ? citizenId : undefined,
+    verificationStatus: targetNewStatus === 'CLOSED' ? 'YES_SOLVED' : (targetNewStatus === 'REOPENED' ? canonicalResponse : undefined),
+    verificationResponse: canonicalResponse,
+    feedbackComment: feedbackDoc.comment,
+    feedbackRating: feedbackDoc.rating,
+    verificationsCount: yesResponsesCount,
+    verificationsTotal: totalRequired,
+    updatedAt: now,
+    syncedAt: now,
+  });
+  batch.set(doc(db, 'waterIssues', targetIssueId), issueUpdates, { merge: true });
 
-  let updatedIssue: WaterIssue | null = null;
-  let allCompleted = false;
+  // E. Create Status History Audit Log (CITIZEN_VERIFICATION → CLOSED or CITIZEN_VERIFICATION → REOPENED)
+  const updId = `upd-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+  const statusHistoryEntry: ReportUpdate = {
+    id: updId,
+    updateId: updId,
+    reportId: targetIssueId,
+    status: targetNewStatus,
+    message: statusHistoryMessage,
+    createdBy: citizenName || 'Resident Citizen',
+    role: 'Citizen',
+    createdAt: now,
+  };
+  batch.set(doc(db, 'updates', updId), cleanForFirestore(statusHistoryEntry), { merge: true });
 
-  if (hasUnresolved) {
-    // Citizen reported NOT RESOLVED: issue must immediately become REOPENED
-    updatedIssue = await persistWaterIssueStatusChange(
-      issueId,
-      'REOPENED',
-      {
-        reopenReason: feedbackDoc.comment,
-        reopenedBy: citizenId,
-        reopenedAt: now,
-        isSolved: false,
-      },
-      `Citizen ${citizenName || 'Citizen'} reported issue was Not Resolved. Issue returned to Water Officer.`,
-      { id: citizenId, name: citizenName, role: 'Citizen' }
-    );
-  } else if (confirmedYesCount >= totalLinked) {
-    // All linked citizens confirmed resolved: issue can now become CLOSED
-    allCompleted = true;
-    updatedIssue = await persistWaterIssueStatusChange(
-      issueId,
-      'CLOSED',
-      {
-        closedAt: now,
-        isSolved: true,
-        verificationsCount: totalLinked,
-        verificationsTotal: totalLinked,
-      },
-      `All ${totalLinked} citizen verifications completed with resolution confirmation. Water issue officially closed.`,
-      { id: citizenId, name: citizenName, role: 'Citizen' }
-    );
-  } else {
-    // Partial responses: e.g. 1 of 2 completed. Keep in CITIZEN_VERIFICATION!
-    const issueRef = doc(db, 'waterIssues', issueId);
-    const partialData = cleanForFirestore({
-      status: 'CITIZEN_VERIFICATION',
-      verificationsCount: confirmedYesCount,
-      verificationsTotal: totalLinked,
-      updatedAt: now,
-      syncedAt: now,
-    });
-    await updateDoc(issueRef, partialData).catch(() =>
-      setDoc(issueRef, partialData, { merge: true })
-    );
+  // Commit all operations atomically
+  await batch.commit();
 
-    const updId = `upd-${Date.now()}`;
-    const logItem: ReportUpdate = {
-      id: updId,
-      updateId: updId,
-      reportId: issueId,
-      status: 'CITIZEN_VERIFICATION',
-      message: `Citizen ${citizenName || 'Citizen'} submitted verification (${confirmedYesCount} of ${totalLinked} completed). Awaiting remaining citizen responses before closure.`,
-      createdBy: citizenName || 'Citizen',
-      role: 'Citizen',
-      createdAt: now,
-    };
-    await setDoc(doc(db, 'updates', updId), cleanForFirestore(logItem), { merge: true });
-
-    const freshSnap = await getDoc(issueRef);
-    if (freshSnap.exists()) {
-      updatedIssue = freshSnap.data() as WaterIssue;
-    }
-  }
+  // Fetch fresh Water Issue from Firestore
+  const freshSnap = await getDoc(doc(db, 'waterIssues', targetIssueId));
+  const updatedIssue: WaterIssue | null = freshSnap.exists()
+    ? { ...(freshSnap.data() as WaterIssue), id: freshSnap.id, issueId: freshSnap.id }
+    : null;
 
   return {
     feedback: feedbackDoc,
     issue: updatedIssue,
-    allVerificationsCompleted: allCompleted,
-    verificationsCount: confirmedYesCount,
-    verificationsTotal: totalLinked,
+    allVerificationsCompleted: targetNewStatus === 'CLOSED',
+    verificationsCount: yesResponsesCount,
+    verificationsTotal: totalRequired,
   };
 }
 

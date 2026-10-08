@@ -19,6 +19,8 @@ export const CitizenFeedbackModal: React.FC<CitizenFeedbackModalProps> = ({
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const [formError, setFormError] = useState<string | null>(null);
+
   if (!reportId) return null;
 
   const report = reports.find((r) => r.id === reportId);
@@ -26,6 +28,13 @@ export const CitizenFeedbackModal: React.FC<CitizenFeedbackModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError(null);
+
+    if (resolutionStatus !== 'Yes' && !comment.trim()) {
+      setFormError('Please enter a comment/reason explaining what is still pending.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -33,13 +42,25 @@ export const CitizenFeedbackModal: React.FC<CitizenFeedbackModalProps> = ({
         reportId,
         rating,
         resolutionStatus,
-        comment: comment.trim() || 'Work verified by citizen.',
+        verificationResponse:
+          resolutionStatus === 'Yes'
+            ? 'YES_SOLVED'
+            : resolutionStatus === 'Partially'
+            ? 'PARTIALLY_SOLVED'
+            : 'NOT_SOLVED',
+        comment:
+          comment.trim() ||
+          (resolutionStatus === 'Yes'
+            ? 'Work verified by citizen.'
+            : 'Citizen reported issue as unresolved.'),
         citizenId: currentUser?.id || report.citizenId,
         citizenName: currentUser?.name || report.citizenName,
       });
+      onClose();
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to submit feedback.');
     } finally {
       setIsSubmitting(false);
-      onClose();
     }
   };
 
@@ -49,7 +70,7 @@ export const CitizenFeedbackModal: React.FC<CitizenFeedbackModalProps> = ({
         <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ThumbsUp className="w-5 h-5 text-emerald-400" />
-            <h3 className="text-base font-bold">Citizen Service Feedback</h3>
+            <h3 className="text-base font-bold">Citizen Service Feedback & Verification</h3>
           </div>
           <button
             onClick={onClose}
@@ -60,13 +81,19 @@ export const CitizenFeedbackModal: React.FC<CitizenFeedbackModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
+          {formError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-700">
+              {formError}
+            </div>
+          )}
+
           <div>
             <span className="text-[11px] font-mono text-blue-700 font-bold block">
               Report ID: {report.id}
             </span>
             <h4 className="text-sm font-bold text-slate-900 mt-0.5">{report.title}</h4>
             <p className="text-xs text-slate-500 mt-1">
-              Department: {report.departmentName}
+              Department: {report.departmentName || 'Water Service Department'}
             </p>
           </div>
 
@@ -107,21 +134,30 @@ export const CitizenFeedbackModal: React.FC<CitizenFeedbackModalProps> = ({
           {/* Was issue resolved */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-              Was the issue satisfactorily resolved?
+              Was the water issue satisfactorily resolved?
             </label>
             <div className="grid grid-cols-3 gap-2 text-xs">
-              {(['Yes', 'Partially', 'No'] as const).map((opt) => (
+              {[
+                { key: 'Yes' as const, label: 'Yes, Solved', desc: 'Confirm & Close' },
+                { key: 'Partially' as const, label: 'Partially Solved', desc: 'Reopen Issue' },
+                { key: 'No' as const, label: 'Not Solved', desc: 'Reopen Issue' },
+              ].map(({ key, label, desc }) => (
                 <button
                   type="button"
-                  key={opt}
-                  onClick={() => setResolutionStatus(opt)}
-                  className={`py-2 px-3 rounded-lg border font-medium text-center transition-colors ${
-                    resolutionStatus === opt
-                      ? 'bg-blue-50 border-blue-600 text-blue-700 font-bold'
+                  key={key}
+                  onClick={() => setResolutionStatus(key)}
+                  className={`py-2 px-2.5 rounded-lg border text-center transition-colors ${
+                    resolutionStatus === key
+                      ? key === 'Yes'
+                        ? 'bg-emerald-50 border-emerald-600 text-emerald-800 font-bold'
+                        : key === 'Partially'
+                        ? 'bg-amber-50 border-amber-600 text-amber-800 font-bold'
+                        : 'bg-rose-50 border-rose-600 text-rose-800 font-bold'
                       : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {opt}
+                  <span className="block text-xs font-bold">{label}</span>
+                  <span className="text-[10px] opacity-75">{desc}</span>
                 </button>
               ))}
             </div>
@@ -130,13 +166,17 @@ export const CitizenFeedbackModal: React.FC<CitizenFeedbackModalProps> = ({
           {/* Comments */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Comments or Observations
+              Comments or Observations {resolutionStatus !== 'Yes' && <span className="text-rose-600">*</span>}
             </label>
             <textarea
               rows={3}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
-              placeholder="Tell us about your experience with the field officers and municipal team..."
+              placeholder={
+                resolutionStatus === 'Yes'
+                  ? 'Tell us about your experience with the water department team...'
+                  : 'Please explain what remains unresolved so field officers can address it...'
+              }
               className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-blue-500"
             />
           </div>

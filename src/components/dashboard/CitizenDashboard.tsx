@@ -61,7 +61,7 @@ export const CitizenDashboard: React.FC<{ onOpenFeedback: (reportId: string) => 
   const totalWaterReports = displayReports.length;
 
   const activeReportsCount = displayReports.filter(
-    (r) => r.status !== 'CLOSED' && r.status !== 'SOLVED'
+    (r) => r.status !== 'CLOSED' && r.status !== 'SOLVED' && r.status !== 'CITIZEN_VERIFICATION'
   ).length;
 
   const inProgressCount = displayReports.filter(
@@ -241,10 +241,10 @@ export const CitizenDashboard: React.FC<{ onOpenFeedback: (reportId: string) => 
                       </span>
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      <PriorityBadge priority={report.priority} size="sm" />
+                      <PriorityBadge priority={report.priority || 'Medium'} size="sm" />
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
-                      <StatusBadge status={report.status} size="sm" />
+                      <StatusBadge status={report.status || 'SUBMITTED'} size="sm" />
                     </td>
                     <td className="py-3.5 px-4 whitespace-nowrap">
                       {report.assignedWorkerName ? (
@@ -267,7 +267,7 @@ export const CitizenDashboard: React.FC<{ onOpenFeedback: (reportId: string) => 
                         <span>Track</span>
                       </button>
 
-                      {report.status === 'SOLVED' && (
+                      {(report.status === 'SOLVED' || report.status === 'CITIZEN_VERIFICATION') && (
                         <button
                           onClick={() => {
                             setSelectedReportId(report.id);

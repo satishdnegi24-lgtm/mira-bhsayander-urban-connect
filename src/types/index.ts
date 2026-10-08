@@ -108,9 +108,15 @@ export interface WaterIssue {
   updatedAt: string;
   citizenVerification?: {
     status: 'Yes' | 'Partially' | 'No';
+    verificationResponse?: 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED';
     comment?: string;
     verifiedAt: string;
+    rating?: number;
   };
+  verificationStatus?: 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED' | 'Yes' | 'Partially' | 'No';
+  verificationResponse?: 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED';
+  feedbackComment?: string;
+  feedbackRating?: number;
   verificationsCount?: number;
   verificationsTotal?: number;
   departmentId?: string;
@@ -163,9 +169,12 @@ export interface WaterReport {
   };
   citizenVerification?: {
     status: 'Yes' | 'Partially' | 'No';
+    verificationResponse?: 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED';
     comment?: string;
     verifiedAt: string;
+    rating?: number;
   };
+  verificationResponse?: 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED';
   isSolved?: boolean;
   reopenedAt?: string;
   reopenedBy?: string;
@@ -209,8 +218,10 @@ export interface ReportFeedback {
   citizenName?: string;
   rating: number; // 1 to 5
   resolutionStatus: 'Yes' | 'Partially' | 'No';
+  verificationResponse?: 'YES_SOLVED' | 'PARTIALLY_SOLVED' | 'NOT_SOLVED';
   comment: string;
   createdAt: string;
+  submittedAt?: string;
 }
 
 export interface Department {

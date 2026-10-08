@@ -250,8 +250,8 @@ export const ReportModal: React.FC = () => {
     const chosenCategory = aiResult?.category || category;
     const chosenPriority = aiResult?.suggestedPriority || 'Medium';
 
-    setTimeout(() => {
-      const newReport = addReport({
+    setTimeout(async () => {
+      const newReport = await addReport({
         title: title.trim(),
         category: chosenCategory,
         description: description.trim(),
@@ -274,7 +274,9 @@ export const ReportModal: React.FC = () => {
 
       setIsSubmittingFinal(false);
       setIsReportModalOpen(false);
-      setSelectedReportId(newReport.id);
+      if (newReport && 'id' in (newReport as any)) {
+        setSelectedReportId((newReport as any).id);
+      }
       setActivePage('track');
 
       // Reset

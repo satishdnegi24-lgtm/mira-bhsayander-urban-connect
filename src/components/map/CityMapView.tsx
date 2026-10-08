@@ -251,8 +251,8 @@ export const CityMapView: React.FC = () => {
                   <span className="font-mono text-sm font-bold text-blue-700">
                     {activePin.id}
                   </span>
-                  <StatusBadge status={activePin.status} size="sm" />
-                  <PriorityBadge priority={activePin.priority} size="sm" />
+                  <StatusBadge status={activePin.status || 'SUBMITTED'} size="sm" />
+                  <PriorityBadge priority={activePin.priority || 'Medium'} size="sm" />
                 </div>
 
                 <h4 className="font-bold text-slate-900 text-sm">{activePin.title}</h4>
