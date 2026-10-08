@@ -111,6 +111,8 @@ export interface WaterIssue {
     comment?: string;
     verifiedAt: string;
   };
+  verificationsCount?: number;
+  verificationsTotal?: number;
   departmentId?: string;
   departmentName?: string;
 }
@@ -202,6 +204,7 @@ export interface ReportFeedback {
   id: string; // feedbackId
   feedbackId?: string;
   reportId: string;
+  issueId?: string;
   citizenId: string;
   citizenName?: string;
   rating: number; // 1 to 5

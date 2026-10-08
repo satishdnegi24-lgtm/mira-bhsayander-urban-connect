@@ -59,6 +59,10 @@ export const OfficerDashboard: React.FC = () => {
     updatePriority,
     updateCategory,
     addReportComment,
+    waterIssues,
+    waterReports,
+    getReportsForIssue,
+    getIssueForReport,
   } = useApp();
 
   const officerName = currentUser?.name || 'Water Department Officer';
@@ -184,10 +188,23 @@ export const OfficerDashboard: React.FC = () => {
     return updates.filter((u) => u.reportId === selectedReport.id);
   }, [selectedReport, updates]);
 
+  // Linked Citizen Reports & Feedbacks for Consolidated Water Issue
+  const linkedCitizenReports = useMemo(() => {
+    if (!selectedReport) return [];
+    const issueId = selectedReport.issueId || selectedReport.id;
+    return getReportsForIssue(issueId);
+  }, [selectedReport, getReportsForIssue, waterReports, departmentReports]);
+
   const activeReportFeedback = useMemo(() => {
     if (!selectedReport) return null;
-    return feedbacks.find((f) => f.reportId === selectedReport.id);
+    return feedbacks.find((f) => f.reportId === selectedReport.id || f.issueId === (selectedReport.issueId || selectedReport.id));
   }, [selectedReport, feedbacks]);
+
+  const linkedFeedbacks = useMemo(() => {
+    if (!selectedReport) return [];
+    const issueId = selectedReport.issueId || selectedReport.id;
+    return feedbacks.filter((f) => f.issueId === issueId || linkedCitizenReports.some((r) => r.reportId === f.reportId || r.id === f.reportId));
+  }, [selectedReport, feedbacks, linkedCitizenReports]);
 
   // Confirm worker assignment
   const handleAssignWorker = async (e: React.FormEvent) => {
@@ -616,8 +633,53 @@ export const OfficerDashboard: React.FC = () => {
                   </p>
                 )}
 
+                {/* Consolidated Water Issue Summary & Linked Citizen Evidence (Requirement 1 & 2) */}
+                <div className="p-3 bg-blue-50/60 border border-blue-200 rounded-lg space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-blue-950 text-xs flex items-center gap-1.5">
+                      <Droplets className="w-3.5 h-3.5 text-blue-700" />
+                      Consolidated Water Issue
+                    </span>
+                    <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-200 text-blue-900">
+                      {linkedCitizenReports.length > 0 ? linkedCitizenReports.length : (selectedReport.citizenReportCount || 1)} Citizen Report{(linkedCitizenReports.length > 1 || (selectedReport.citizenReportCount || 1) > 1) ? 's' : ''}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600">
+                    Multiple citizen reports regarding this same water incident are linked to this single operational issue.
+                  </p>
+
+                  {/* Citizen Reports Breakdown */}
+                  <div className="space-y-2 pt-1 border-t border-blue-200/60">
+                    <span className="text-[10px] font-bold uppercase text-blue-900 block">
+                      Linked Citizen Submissions & Evidence:
+                    </span>
+                    {(linkedCitizenReports.length > 0 ? linkedCitizenReports : [selectedReport]).map((cr, idx) => (
+                      <div key={cr.id || idx} className="p-2 bg-white rounded-lg border border-blue-100 shadow-2xs space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <strong className="text-slate-900 font-semibold">{cr.citizenName}</strong>
+                          <span className="font-mono text-[10px] text-blue-700 font-bold">{cr.reportId || cr.id}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-600">{cr.description}</p>
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span>{cr.area} · {cr.location}</span>
+                          <span>{new Date(cr.createdAt).toLocaleDateString()}</span>
+                        </div>
+                        {(cr.photoUrl || cr.photo) && (
+                          <div className="pt-1">
+                            <img
+                              src={cr.photoUrl || cr.photo}
+                              alt={`Evidence from ${cr.citizenName}`}
+                              className="w-full h-24 object-cover rounded-md border border-slate-200"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Uploaded Photo */}
-                {selectedReport.photoUrl && (
+                {selectedReport.photoUrl && linkedCitizenReports.length <= 1 && (
                   <div>
                     <span className="text-slate-400 block text-[10px] uppercase font-semibold mb-1">
                       Uploaded Photo:
@@ -746,26 +808,70 @@ export const OfficerDashboard: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Action 7: Mark Solved (Requirement 20) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSolveDescription(
-                      selectedReport.resolutionNotes ||
-                        'Damaged pipeline section repaired and water leakage stopped.'
-                    );
-                    setSolvePhotoUrl(selectedReport.resolutionPhotoUrl || '');
-                    setSolveError(null);
-                    setIsSolveModalOpen(true);
-                  }}
-                  disabled={selectedReport.status === 'SOLVED' || selectedReport.status === 'CLOSED'}
-                  className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-colors flex items-center justify-center gap-2 disabled:opacity-40"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Mark as Solved</span>
-                </button>
+                {/* Action 7: Mark Solved (when not yet solved or closed) */}
+                {selectedReport.status !== 'SOLVED' && selectedReport.status !== 'CITIZEN_VERIFICATION' && selectedReport.status !== 'CLOSED' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSolveDescription(
+                        selectedReport.resolutionNotes ||
+                          'Damaged pipeline section repaired and water leakage stopped.'
+                      );
+                      setSolvePhotoUrl(selectedReport.resolutionPhotoUrl || '');
+                      setSolveError(null);
+                      setIsSolveModalOpen(true);
+                    }}
+                    className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-colors flex items-center justify-center gap-2"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>Mark as Solved (Request Citizen Verification)</span>
+                  </button>
+                )}
 
-                {/* Direct Quick Status Override for Officer */}
+                {/* Requirement: When status is SOLVED or CITIZEN_VERIFICATION, show Awaiting Citizen Verification banner (Officers cannot close issue) */}
+                {(selectedReport.status === 'SOLVED' || selectedReport.status === 'CITIZEN_VERIFICATION') && (
+                  <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-lg space-y-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-900 flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-amber-600" />
+                        Awaiting Citizen Verification
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-bold">
+                        {linkedFeedbacks.length} of {linkedCitizenReports.length > 0 ? linkedCitizenReports.length : (selectedReport.citizenReportCount || 1)} Completed
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      Citizen verification is required before this issue can be closed. Officers cannot directly close issues. All linked citizens must confirm satisfactory resolution.
+                    </p>
+
+                    {/* Display submitted citizen feedbacks if any */}
+                    {linkedFeedbacks.length > 0 && (
+                      <div className="pt-2 border-t border-amber-200/80 space-y-1.5">
+                        <span className="text-[10px] uppercase font-bold text-amber-950 block">
+                          Submitted Citizen Verifications:
+                        </span>
+                        {linkedFeedbacks.map((fb) => (
+                          <div key={fb.id} className="p-2 bg-white rounded-md border border-amber-200 text-[11px] space-y-0.5">
+                            <div className="flex items-center justify-between">
+                              <span className="font-semibold text-slate-800">{fb.citizenName || 'Citizen'}</span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                fb.resolutionStatus === 'Yes' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                              }`}>
+                                {fb.resolutionStatus === 'Yes' ? 'Verified Resolved' : 'Not Resolved'}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-amber-600 flex items-center gap-1">
+                              Rating: {'★'.repeat(fb.rating)}{'☆'.repeat(5 - fb.rating)} ({fb.rating}/5)
+                            </div>
+                            {fb.comment && <p className="text-slate-600 text-[10px] italic">"{fb.comment}"</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Direct Quick Status Override for Officer (Closed is NOT permitted directly) */}
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 text-xs">
                   <span className="text-[11px] font-semibold text-slate-500">Quick Set Status:</span>
                   <select
@@ -778,9 +884,8 @@ export const OfficerDashboard: React.FC = () => {
                     <option value="OFFICER_REVIEW">Officer Review</option>
                     <option value="WORKER_ASSIGNED">Worker Assigned</option>
                     <option value="WORK_IN_PROGRESS">Work In Progress</option>
-                    <option value="SOLVED">Solved</option>
+                    <option value="SOLVED">Solved (Awaiting Verification)</option>
                     <option value="REOPENED">Reopened</option>
-                    <option value="CLOSED">Closed</option>
                   </select>
                 </div>
               </div>

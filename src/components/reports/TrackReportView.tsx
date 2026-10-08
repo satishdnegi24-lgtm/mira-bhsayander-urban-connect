@@ -107,7 +107,8 @@ export const TrackReportView: React.FC<{ onOpenFeedback: (reportId: string) => v
 
   const currentStepIndex = currentReport ? getTimelineIndex(currentReport.status) : 0;
   const isReopened = currentReport?.status === 'REOPENED';
-  const isAwaitingVerification = currentReport?.status === 'SOLVED';
+  const isAwaitingVerification =
+    currentReport?.status === 'SOLVED' || currentReport?.status === 'CITIZEN_VERIFICATION';
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();

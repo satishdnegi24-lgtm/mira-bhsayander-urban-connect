@@ -939,6 +939,92 @@ export async function persistWaterIssueStatusChange(
         extraData.reopenReason || 'Citizen reported issue unresolved';
       statusTimestamps.isSolved = false;
     } else if (newStatus === 'CLOSED') {
+      // MANDATORY CLOSURE VALIDATION AGAINST FIRESTORE (Requirement: A Water Issue must NEVER be marked CLOSED unless citizen verification/feedback completed)
+      // 1. Fetch all linked waterReports for this issueId from Firestore
+      const qReports = query(collection(db, 'waterReports'), where('issueId', '==', issueId));
+      const repSnap = await getDocs(qReports);
+      const linkedReports: WaterReport[] = [];
+      repSnap.forEach((d) => linkedReports.push(d.data() as WaterReport));
+
+      // 2. Fetch all feedbacks for this issueId from Firestore
+      const qFeedbacks = query(collection(db, 'feedbacks'), where('issueId', '==', issueId));
+      const fbSnap = await getDocs(qFeedbacks);
+      const feedbacksList: ReportFeedback[] = [];
+      fbSnap.forEach((d) => feedbacksList.push(d.data() as ReportFeedback));
+
+      // Also check if any feedback matches by reportId
+      if (linkedReports.length > 0 && feedbacksList.length === 0) {
+        const allFbSnap = await getDocs(collection(db, 'feedbacks'));
+        allFbSnap.forEach((d) => {
+          const fb = d.data() as ReportFeedback;
+          if (linkedReports.some((r) => r.reportId === fb.reportId || r.id === fb.reportId)) {
+            feedbacksList.push(fb);
+          }
+        });
+      }
+
+      // Check each linked report
+      const totalRequired = linkedReports.length > 0 ? linkedReports.length : 1;
+      let validYesResponses = 0;
+      let hasUnresolvedResponse = false;
+
+      for (const rep of linkedReports) {
+        const fb = feedbacksList.find(
+          (f) =>
+            f.reportId === rep.reportId ||
+            f.reportId === rep.id ||
+            (f.citizenId && f.citizenId === rep.citizenId)
+        );
+        const ver = rep.citizenVerification || (fb ? { status: fb.resolutionStatus, comment: fb.comment, verifiedAt: fb.createdAt } : null);
+
+        if (!ver && !fb) {
+          // No response from this citizen
+          continue;
+        }
+
+        const statusResponse = ver?.status || fb?.resolutionStatus;
+        if (statusResponse === 'No' || statusResponse === 'Partially') {
+          hasUnresolvedResponse = true;
+          break;
+        }
+
+        if (statusResponse === 'Yes') {
+          validYesResponses++;
+        }
+      }
+
+      if (hasUnresolvedResponse) {
+        console.warn(`[Closure Validation] Citizen indicated issue was Not Resolved. Changing status to REOPENED.`);
+        return persistWaterIssueStatusChange(
+          issueId,
+          'REOPENED',
+          {
+            ...extraData,
+            reopenReason: extraData.reopenReason || 'Citizen indicated water issue was not resolved during verification.',
+            reopenedAt: now,
+          },
+          'Citizen reported issue is not resolved. Issue reopened.',
+          userActor
+        );
+      }
+
+      // If required citizen verification/feedback does not exist or not all citizens have responded:
+      if (validYesResponses === 0 || validYesResponses < totalRequired) {
+        const errorMsg = `Citizen verification is required before this issue can be closed.`;
+        console.warn(`[Closure Validation] REJECTED: ${errorMsg} (${validYesResponses} of ${totalRequired} completed)`);
+
+        // Keep issue in CITIZEN_VERIFICATION in Firestore
+        const keepPayload = cleanForFirestore({
+          status: 'CITIZEN_VERIFICATION',
+          verificationsCount: validYesResponses,
+          verificationsTotal: totalRequired,
+          updatedAt: now,
+          syncedAt: now,
+        });
+        await updateDoc(issueRef, keepPayload).catch(() => {});
+        throw new Error(errorMsg);
+      }
+
       statusTimestamps.closedAt = extraData.closedAt || now;
       statusTimestamps.isSolved = true;
     } else if (newStatus === 'WORKER_ASSIGNED') {
@@ -1039,8 +1125,175 @@ export async function persistWaterIssueStatusChange(
     return null;
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `waterIssues/${issueId}`);
-    return null;
+    throw error;
   }
+}
+
+// Submit Citizen Verification & Feedback with multi-citizen consolidation support
+export async function submitCitizenVerificationFeedback(params: {
+  issueId: string;
+  reportId: string;
+  citizenId: string;
+  citizenName?: string;
+  resolutionStatus: 'Yes' | 'Partially' | 'No';
+  rating: number;
+  comment: string;
+}): Promise<{
+  feedback: ReportFeedback;
+  issue: WaterIssue | null;
+  allVerificationsCompleted: boolean;
+  verificationsCount: number;
+  verificationsTotal: number;
+}> {
+  const now = new Date().toISOString();
+  const { issueId, reportId, citizenId, citizenName, resolutionStatus, rating, comment } = params;
+
+  // 1. Save individual feedback document to Firestore (Separate record per citizen)
+  const fbId = `fb-${reportId}-${citizenId || Date.now()}`;
+  const feedbackDoc: ReportFeedback = {
+    id: fbId,
+    feedbackId: fbId,
+    reportId,
+    issueId,
+    citizenId,
+    citizenName: citizenName || 'Resident Citizen',
+    rating: Math.max(1, Math.min(5, rating || 5)),
+    resolutionStatus,
+    comment: comment?.trim() || (resolutionStatus === 'Yes' ? 'Resolution verified by citizen.' : 'Issue unresolved.'),
+    createdAt: now,
+  };
+  await setDoc(doc(db, 'feedbacks', fbId), cleanForFirestore(feedbackDoc), { merge: true });
+
+  // 2. Update the specific citizen's WaterReport in Firestore
+  const reportVerification = {
+    status: resolutionStatus,
+    comment: feedbackDoc.comment,
+    verifiedAt: now,
+  };
+
+  const repUpdates = cleanForFirestore({
+    hasFeedback: true,
+    feedbackRating: feedbackDoc.rating,
+    feedbackComment: feedbackDoc.comment,
+    citizenVerification: reportVerification,
+    updatedAt: now,
+    syncedAt: now,
+  });
+
+  await setDoc(doc(db, 'waterReports', reportId), repUpdates, { merge: true });
+  await setDoc(doc(db, 'reports', reportId), repUpdates, { merge: true });
+
+  // 3. Query all linked citizen reports for this issueId from Firestore
+  const qReports = query(collection(db, 'waterReports'), where('issueId', '==', issueId));
+  const repSnap = await getDocs(qReports);
+  const linkedReports: WaterReport[] = [];
+  repSnap.forEach((d) => linkedReports.push(d.data() as WaterReport));
+
+  // Also query all feedbacks for this issueId from Firestore
+  const qFeedbacks = query(collection(db, 'feedbacks'), where('issueId', '==', issueId));
+  const fbSnap = await getDocs(qFeedbacks);
+  const feedbacksList: ReportFeedback[] = [];
+  fbSnap.forEach((d) => feedbacksList.push(d.data() as ReportFeedback));
+
+  const totalLinked = Math.max(1, linkedReports.length);
+  let confirmedYesCount = 0;
+  let hasUnresolved = false;
+
+  for (const rep of linkedReports) {
+    const fb = feedbacksList.find(
+      (f) =>
+        f.reportId === rep.reportId ||
+        f.reportId === rep.id ||
+        (f.citizenId && f.citizenId === rep.citizenId)
+    );
+    const ver = rep.citizenVerification || (fb ? { status: fb.resolutionStatus, comment: fb.comment } : null);
+
+    const st = ver?.status || fb?.resolutionStatus;
+    if (st === 'No' || st === 'Partially') {
+      hasUnresolved = true;
+      break;
+    }
+    if (st === 'Yes') {
+      confirmedYesCount++;
+    }
+  }
+
+  if (resolutionStatus === 'No' || resolutionStatus === 'Partially') {
+    hasUnresolved = true;
+  }
+
+  let updatedIssue: WaterIssue | null = null;
+  let allCompleted = false;
+
+  if (hasUnresolved) {
+    // Citizen reported NOT RESOLVED: issue must immediately become REOPENED
+    updatedIssue = await persistWaterIssueStatusChange(
+      issueId,
+      'REOPENED',
+      {
+        reopenReason: feedbackDoc.comment,
+        reopenedBy: citizenId,
+        reopenedAt: now,
+        isSolved: false,
+      },
+      `Citizen ${citizenName || 'Citizen'} reported issue was Not Resolved. Issue returned to Water Officer.`,
+      { id: citizenId, name: citizenName, role: 'Citizen' }
+    );
+  } else if (confirmedYesCount >= totalLinked) {
+    // All linked citizens confirmed resolved: issue can now become CLOSED
+    allCompleted = true;
+    updatedIssue = await persistWaterIssueStatusChange(
+      issueId,
+      'CLOSED',
+      {
+        closedAt: now,
+        isSolved: true,
+        verificationsCount: totalLinked,
+        verificationsTotal: totalLinked,
+      },
+      `All ${totalLinked} citizen verifications completed with resolution confirmation. Water issue officially closed.`,
+      { id: citizenId, name: citizenName, role: 'Citizen' }
+    );
+  } else {
+    // Partial responses: e.g. 1 of 2 completed. Keep in CITIZEN_VERIFICATION!
+    const issueRef = doc(db, 'waterIssues', issueId);
+    const partialData = cleanForFirestore({
+      status: 'CITIZEN_VERIFICATION',
+      verificationsCount: confirmedYesCount,
+      verificationsTotal: totalLinked,
+      updatedAt: now,
+      syncedAt: now,
+    });
+    await updateDoc(issueRef, partialData).catch(() =>
+      setDoc(issueRef, partialData, { merge: true })
+    );
+
+    const updId = `upd-${Date.now()}`;
+    const logItem: ReportUpdate = {
+      id: updId,
+      updateId: updId,
+      reportId: issueId,
+      status: 'CITIZEN_VERIFICATION',
+      message: `Citizen ${citizenName || 'Citizen'} submitted verification (${confirmedYesCount} of ${totalLinked} completed). Awaiting remaining citizen responses before closure.`,
+      createdBy: citizenName || 'Citizen',
+      role: 'Citizen',
+      createdAt: now,
+    };
+    await setDoc(doc(db, 'updates', updId), cleanForFirestore(logItem), { merge: true });
+
+    const freshSnap = await getDoc(issueRef);
+    if (freshSnap.exists()) {
+      updatedIssue = freshSnap.data() as WaterIssue;
+    }
+  }
+
+  return {
+    feedback: feedbackDoc,
+    issue: updatedIssue,
+    allVerificationsCompleted: allCompleted,
+    verificationsCount: confirmedYesCount,
+    verificationsTotal: totalLinked,
+  };
 }
 
 // Backward-compatible status updater (finds underlying issue if reportId is passed)

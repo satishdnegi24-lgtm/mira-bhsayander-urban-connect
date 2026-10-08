@@ -580,6 +580,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return notifications.filter((n) => !n.read && (n.userId === currentUser.id || n.userId === 'all' || n.userId === 'officer')).length;
   }, [notifications, currentUser, isAuthenticated]);
 
+  // Operational Water Issues for Officer Dashboard (ONE issue for many citizen reports)
+  const departmentIssues = useMemo(() => {
+    return waterIssues;
+  }, [waterIssues]);
+
+  const selectedIssue = useMemo(() => {
+    if (selectedIssueId) {
+      return (
+        waterIssues.find((i) => i.issueId === selectedIssueId || i.id === selectedIssueId) || null
+      );
+    }
+    return waterIssues[0] || null;
+  }, [waterIssues, selectedIssueId]);
+
+  const getReportsForIssue = (issueId: string): WaterReport[] => {
+    const list = waterReports.length > 0 ? waterReports : reports;
+    return list.filter(
+      (r) => r.issueId === issueId || (issueId === 'WTR-ISSUE-00025' && (!r.issueId || r.issueId === 'WTR-ISSUE-00025'))
+    );
+  };
+
+  const getIssueForReport = (reportId: string): WaterIssue | null => {
+    const rep = (waterReports.length > 0 ? waterReports : reports).find(
+      (r) => r.id === reportId || r.reportId === reportId
+    );
+    if (!rep) return null;
+    if (rep.issueId) {
+      return waterIssues.find((i) => i.issueId === rep.issueId || i.id === rep.issueId) || null;
+    }
+    return waterIssues[0] || null;
+  };
+
+  // Helper to resolve underlying issueId if a reportId is provided
+  const resolveTargetIssueId = (id: string): string => {
+    if (id.startsWith('WTR-ISSUE')) return id;
+    const rep = (waterReports.length > 0 ? waterReports : reports).find(
+      (r) => r.id === id || r.reportId === id
+    );
+    if (rep?.issueId) return rep.issueId;
+    return id;
+  };
+
   // All reports belong to Water Service Department
   const departmentReports = reports;
 
@@ -1025,104 +1067,100 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // WORKFLOW: 10. REPORT CREATION (Unique ID format: WTR-2026-000001)
-  const addReport = (data: Partial<Report>): Report => {
+  // WORKFLOW: 10. REPORT CREATION WITH INTELLIGENT DUPLICATE DETECTION & CONSOLIDATION
+  const addReport = async (data: Partial<Report>): Promise<Report> => {
     if (!isAuthenticated || !currentUser) {
       addToast('Authentication required: Please sign in or register to submit a water report.', 'error');
       openAuthModal('login', 'Please sign in or register to submit a water report.');
       throw new Error('User must be authenticated to submit a report.');
     }
 
-    const reportIndex = reports.length + 1;
-    const paddedNum = String(reportIndex).padStart(6, '0');
-    const reportId = `WTR-2026-${paddedNum}`;
+    try {
+      const submission = await submitCitizenWaterReport(data, currentUser);
+      const { report, issue, isDuplicate, duplicateReason } = submission;
 
-    const cat = (data.category as ReportCategory) || 'Water Supply';
-    const now = new Date().toISOString();
+      // Optimistically update states
+      setWaterReports((prev) => [report, ...prev.filter((r) => r.id !== report.id)]);
+      setReports((prev) => [report, ...prev.filter((r) => r.id !== report.id)]);
+      setWaterIssues((prev) => [issue, ...prev.filter((i) => i.id !== issue.id)]);
 
-    const newReport: Report = {
-      id: reportId,
-      reportId: reportId,
-      citizenId: currentUser.id,
-      citizenName: currentUser.name,
-      citizenPhone: currentUser.phone || data.citizenPhone || '+91 98200 00000',
-      title: data.title || 'Water Issue in Mira-Bhayandar',
-      description: data.description || '',
-      category: cat,
-      aiSuggestedCategory: data.aiSuggestedCategory || cat,
-      departmentId: 'water',
-      departmentName: 'Water Service Department',
-      priority: data.priority || 'Medium',
-      location: data.location || 'Mira Road, MBMC',
-      area: data.area || currentUser.area || 'Mira Road East',
-      landmark: data.landmark,
-      photo: data.photo || data.photoUrl,
-      photoUrl: data.photoUrl || data.photo,
-      status: 'SUBMITTED', // Starts at SUBMITTED
-      aiAnalysis: data.aiAnalysis,
-      createdAt: now,
-      updatedAt: now,
-      isSolved: false,
-    };
+      setSelectedReportId(report.id);
+      setSelectedIssueId(issue.id);
 
-    setReports((prev) => [newReport, ...prev]);
-    saveReportToFirestore(newReport);
+      if (isDuplicate) {
+        addToast(
+          `Your report has been linked to an existing water issue in your area (${issue.issueId}). You can track the progress of the shared issue here.`,
+          'info'
+        );
+      } else {
+        addToast(`Water Report ${report.reportId} submitted successfully! New Water Issue ${issue.issueId} created.`, 'success');
+      }
 
-    // Audit Update Log
-    const auditUpdate: ReportUpdate = {
-      id: `upd-${Date.now()}`,
-      updateId: `upd-${Date.now()}`,
-      reportId: reportId,
-      status: 'SUBMITTED',
-      message: `Report filed by citizen ${newReport.citizenName}. AI analyzed category as "${cat}" with ${newReport.priority} priority recommendation.`,
-      createdBy: 'System (Water Intake Desk)',
-      role: 'System',
-      createdAt: now,
-    };
-    setUpdates((prev) => [auditUpdate, ...prev]);
-    saveUpdateToFirestore(auditUpdate);
+      return report;
+    } catch (err: any) {
+      console.error('Error in submitCitizenWaterReport:', err);
+      const reportIndex = reports.length + 1;
+      const paddedNum = String(reportIndex).padStart(6, '0');
+      const fallbackReportId = `WTR-REPORT-${paddedNum}`;
+      const now = new Date().toISOString();
+      const fallbackReport: Report = {
+        id: fallbackReportId,
+        reportId: fallbackReportId,
+        issueId: waterIssues[0]?.issueId || 'WTR-ISSUE-00025',
+        citizenId: currentUser.id,
+        citizenName: currentUser.name,
+        citizenPhone: currentUser.phone || data.citizenPhone || '+91 98200 00000',
+        title: data.title || 'Water Issue in Mira-Bhayandar',
+        description: data.description || '',
+        category: (data.category as ReportCategory) || 'Water Supply',
+        location: data.location || 'Mira Road, MBMC',
+        area: data.area || currentUser.area || 'Mira Road East',
+        landmark: data.landmark,
+        photo: data.photo || data.photoUrl,
+        photoUrl: data.photoUrl || data.photo,
+        status: 'SUBMITTED',
+        createdAt: now,
+        updatedAt: now,
+        isSolved: false,
+      };
 
-    // Citizen Notification
-    if (currentUser?.id) {
-      addAppNotification({
-        userId: currentUser.id,
-        title: 'Water Report Submitted Successfully',
-        message: `Your water report ${reportId} has been submitted to the Water Service Department.`,
-        type: 'info',
-        reportId: reportId,
-      });
+      setReports((prev) => [fallbackReport, ...prev]);
+      saveReportToFirestore(fallbackReport);
+      setSelectedReportId(fallbackReportId);
+      addToast(`Water Report ${fallbackReportId} submitted successfully!`, 'success');
+      return fallbackReport;
     }
-
-    addToast(`Water Report ${reportId} submitted successfully!`, 'success');
-    return newReport;
   };
 
   // WORKFLOW: Confirm Issue Review by Officer (moves to OFFICER_REVIEW)
-  const confirmOfficerReview = async (reportId: string) => {
-    const updated = await persistReportStatusChange(
-      reportId,
+  const confirmOfficerReview = async (targetId: string) => {
+    const issueId = resolveTargetIssueId(targetId);
+    const updated = await persistWaterIssueStatusChange(
+      issueId,
       'OFFICER_REVIEW',
       {},
-      `Water Department Officer ${currentUser?.name || 'Officer'} confirmed and reviewed the complaint.`,
+      `Water Department Officer ${currentUser?.name || 'Officer'} confirmed and reviewed the issue.`,
       { id: currentUser?.id, name: currentUser?.name, role: currentUser?.designation || 'Water Officer' }
     );
     if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === reportId || r.reportId === reportId ? { ...r, ...updated } : r)));
+      setWaterIssues((prev) => prev.map((i) => (i.issueId === updated.issueId ? updated : i)));
+      setReports((prev) => prev.map((r) => (r.issueId === updated.issueId ? { ...r, status: 'OFFICER_REVIEW' } : r)));
     }
     addToast('Issue confirmed and placed under officer review.', 'success');
   };
 
   // WORKFLOW: 17. ASSIGN WORKER
-  const assignWorkerToReport = async (reportId: string, workerId: string) => {
+  const assignWorkerToReport = async (targetId: string, workerId: string) => {
     const worker = workers.find((w) => w.workerId === workerId);
     if (!worker) {
       addToast('Worker not found in Water Service Department records.', 'error');
       return;
     }
 
+    const issueId = resolveTargetIssueId(targetId);
     const now = new Date().toISOString();
-    const updated = await persistReportStatusChange(
-      reportId,
+    const updated = await persistWaterIssueStatusChange(
+      issueId,
       'WORKER_ASSIGNED',
       {
         assignedWorkerId: worker.workerId,
@@ -1136,7 +1174,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === reportId || r.reportId === reportId ? { ...r, ...updated } : r)));
+      setWaterIssues((prev) => prev.map((i) => (i.issueId === updated.issueId ? updated : i)));
+      setReports((prev) => prev.map((r) => (r.issueId === updated.issueId ? { ...r, status: 'WORKER_ASSIGNED', assignedWorkerId: worker.workerId, assignedWorkerName: worker.workerName } : r)));
     }
 
     setWorkers((prev) =>
@@ -1145,30 +1184,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
-    const targetReport = reports.find((r) => r.id === reportId || r.reportId === reportId);
-    if (targetReport) {
+    const linkedReps = getReportsForIssue(issueId);
+    linkedReps.forEach((r) => {
       addAppNotification({
-        userId: targetReport.citizenId,
+        userId: r.citizenId,
         title: 'Field Worker Assigned',
-        message: `Field Worker ${worker.workerName} has been assigned to your water issue ${reportId}.`,
+        message: `Field Worker ${worker.workerName} has been assigned to your water issue ${r.reportId}.`,
         type: 'assignment',
-        reportId: reportId,
+        reportId: r.reportId,
       });
-    }
+    });
 
     addToast(`Worker ${worker.workerName} assigned successfully.`, 'success');
   };
 
   // WORKFLOW: 18. WORK IN PROGRESS
-  const startWorkOnReport = async (reportId: string) => {
-    const current = reports.find((r) => r.id === reportId || r.reportId === reportId);
-    const defaultWorker = DEMO_WORKERS[0] || { workerId: 'w-001', workerName: 'Ramesh Patil' };
+  const startWorkOnReport = async (targetId: string) => {
+    const issueId = resolveTargetIssueId(targetId);
+    const current = waterIssues.find((i) => i.issueId === issueId);
+    const defaultWorker = DEMO_WORKERS[0] || { workerId: 'w-water-1', workerName: 'Ramesh Patil' };
     const finalWorkerId = current?.assignedWorkerId || defaultWorker.workerId;
     const finalWorkerName = current?.assignedWorkerName || defaultWorker.workerName;
     const now = new Date().toISOString();
 
-    const updated = await persistReportStatusChange(
-      reportId,
+    const updated = await persistWaterIssueStatusChange(
+      issueId,
       'WORK_IN_PROGRESS',
       {
         assignedWorkerId: finalWorkerId,
@@ -1182,26 +1222,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === reportId || r.reportId === reportId ? { ...r, ...updated } : r)));
+      setWaterIssues((prev) => prev.map((i) => (i.issueId === updated.issueId ? updated : i)));
+      setReports((prev) => prev.map((r) => (r.issueId === updated.issueId ? { ...r, status: 'WORK_IN_PROGRESS', assignedWorkerId: finalWorkerId, assignedWorkerName: finalWorkerName } : r)));
     }
 
-    if (current) {
+    const linkedReps = getReportsForIssue(issueId);
+    linkedReps.forEach((r) => {
       addAppNotification({
-        userId: current.citizenId,
+        userId: r.citizenId,
         title: 'Work In Progress',
-        message: `Work on your water issue ${reportId} is now in progress (Assigned Worker: ${finalWorkerName}).`,
+        message: `Work on your water issue ${r.reportId} is now in progress (Worker: ${finalWorkerName}).`,
         type: 'status_change',
-        reportId: reportId,
+        reportId: r.reportId,
       });
-    }
+    });
 
-    addToast(`Work on ${reportId} is now In Progress (Worker: ${finalWorkerName}).`, 'success');
+    addToast(`Work on ${issueId} is now In Progress (Worker: ${finalWorkerName}).`, 'success');
   };
 
-  // Direct status update by officer
-  const updateReportStatus = async (reportId: string, newStatus: ReportStatus, note?: string) => {
-    const current = reports.find((r) => r.id === reportId || r.reportId === reportId);
-    const defaultWorker = DEMO_WORKERS[0] || { workerId: 'w-001', workerName: 'Ramesh Patil' };
+  // Direct status update by officer (Enforces NO DIRECT CLOSURE rule)
+  const updateReportStatus = async (targetId: string, newStatus: ReportStatus, note?: string) => {
+    if (newStatus === 'CLOSED') {
+      addToast('Citizen verification is required before this issue can be closed. Officers cannot directly close issues.', 'error');
+      return;
+    }
+
+    const issueId = resolveTargetIssueId(targetId);
+    const current = waterIssues.find((i) => i.issueId === issueId);
+    const defaultWorker = DEMO_WORKERS[0] || { workerId: 'w-water-1', workerName: 'Ramesh Patil' };
     const finalWorkerId =
       current?.assignedWorkerId ||
       (newStatus === 'WORK_IN_PROGRESS' || newStatus === 'WORKER_ASSIGNED'
@@ -1213,8 +1261,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ? defaultWorker.workerName
         : undefined);
 
-    const updated = await persistReportStatusChange(
-      reportId,
+    const updated = await persistWaterIssueStatusChange(
+      issueId,
       newStatus,
       {
         assignedWorkerId: finalWorkerId,
@@ -1225,21 +1273,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
 
     if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === reportId || r.reportId === reportId ? { ...r, ...updated } : r)));
+      setWaterIssues((prev) => prev.map((i) => (i.issueId === updated.issueId ? updated : i)));
+      setReports((prev) => prev.map((r) => (r.issueId === updated.issueId ? { ...r, status: newStatus } : r)));
     }
 
     addToast(`Status updated to ${newStatus.replace(/_/g, ' ')}`, 'success');
   };
 
   // WORKFLOW: 19. PROGRESS UPDATES
-  const addProgressUpdate = (reportId: string, message: string, photoUrl?: string) => {
+  const addProgressUpdate = (targetId: string, message: string, photoUrl?: string) => {
+    const issueId = resolveTargetIssueId(targetId);
     const now = new Date().toISOString();
-    const current = reports.find((r) => r.id === reportId || r.reportId === reportId);
+    const current = waterIssues.find((i) => i.issueId === issueId);
     const currentStatus = current?.status || 'SUBMITTED';
+
     const upd: ReportUpdate = {
       id: `upd-${Date.now()}`,
       updateId: `upd-${Date.now()}`,
-      reportId: reportId,
+      reportId: issueId,
       status: currentStatus,
       message: message.trim(),
       photoUrl: photoUrl || undefined,
@@ -1250,125 +1301,114 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setUpdates((prev) => [upd, ...prev]);
     saveUpdateToFirestore(upd);
 
-    updateReportInFirestore(reportId, { updatedAt: now });
-    setReports((prev) =>
-      prev.map((r) => (r.id === reportId || r.reportId === reportId ? { ...r, updatedAt: now } : r))
-    );
+    updateWaterIssueInFirestore(issueId, { updatedAt: now });
 
-    // Notify citizen
-    if (current) {
+    const linkedReps = getReportsForIssue(issueId);
+    linkedReps.forEach((r) => {
       addAppNotification({
-        userId: current.citizenId,
+        userId: r.citizenId,
         title: 'New Progress Update',
-        message: `Update on ${reportId}: "${message.trim()}"`,
+        message: `Update on ${r.reportId}: "${message.trim()}"`,
         type: 'info',
-        reportId: reportId,
+        reportId: r.reportId,
       });
-    }
+    });
 
-    addToast('Progress update published for citizen.', 'success');
+    addToast('Progress update published for citizens.', 'success');
   };
 
-  // WORKFLOW: 20. MARK AS SOLVED
+  // WORKFLOW: 20. MARK AS SOLVED (Transitions to CITIZEN_VERIFICATION stage)
   const markReportSolved = async (
-    reportId: string,
+    targetId: string,
     resolutionDescription: string,
     resolutionPhotoUrl?: string
   ) => {
+    const issueId = resolveTargetIssueId(targetId);
     const now = new Date().toISOString();
-    const current = reports.find((r) => r.id === reportId || r.reportId === reportId);
+    const current = waterIssues.find((i) => i.issueId === issueId);
 
-    const updated = await persistReportStatusChange(
-      reportId,
-      'SOLVED',
+    const updated = await persistWaterIssueStatusChange(
+      issueId,
+      'CITIZEN_VERIFICATION',
       {
         isSolved: true,
         resolutionNotes: resolutionDescription,
         resolutionPhotoUrl: resolutionPhotoUrl || current?.resolutionPhotoUrl,
         solvedAt: now,
+        verificationsCount: 0,
+        verificationsTotal: current?.citizenReportCount || 1,
       },
       `Issue marked as solved by Officer ${currentUser?.name || 'Officer'}. Resolution: "${resolutionDescription}". Awaiting citizen verification.`,
       { id: currentUser?.id, name: currentUser?.name, role: currentUser?.designation || 'Water Officer' }
     );
 
     if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === reportId || r.reportId === reportId ? { ...r, ...updated } : r)));
+      setWaterIssues((prev) => prev.map((i) => (i.issueId === updated.issueId ? updated : i)));
+      setReports((prev) => prev.map((r) => (r.issueId === updated.issueId ? { ...r, ...updated, status: 'CITIZEN_VERIFICATION' } : r)));
     }
 
-    if (current) {
+    const linkedReps = getReportsForIssue(issueId);
+    linkedReps.forEach((r) => {
       addAppNotification({
-        userId: current.citizenId,
+        userId: r.citizenId,
         title: 'Water Issue Solved — Verification Required',
-        message: `Your water issue ${reportId} has been marked as solved. Please verify the resolution.`,
+        message: `Your water issue ${r.reportId} has been marked as solved. Please verify the resolution.`,
         type: 'verification',
-        reportId: reportId,
+        reportId: r.reportId,
       });
-    }
+    });
 
-    addToast('Marked as solved. Citizen verification requested.', 'success');
+    addToast('Marked as solved. Awaiting citizen verification before closure.', 'success');
   };
 
-  // WORKFLOW: 21. CITIZEN VERIFICATION (Requirements 6, 7, 8)
+  // WORKFLOW: 21. CITIZEN VERIFICATION
   const verifyCitizenResolution = async (
     reportId: string,
     status: 'Yes' | 'Partially' | 'No',
     comment?: string
   ) => {
-    const now = new Date().toISOString();
-    const isYes = status === 'Yes';
-    const targetStatus: ReportStatus = isYes ? 'CLOSED' : 'REOPENED';
-    const verificationNote =
-      comment || (isYes ? 'Citizen verified complete resolution.' : 'Citizen indicated water issue is not fully resolved.');
+    const rep = reports.find((r) => r.id === reportId || r.reportId === reportId);
+    const issueId = rep?.issueId || 'WTR-ISSUE-00025';
 
-    const updated = await persistReportStatusChange(
-      reportId,
-      targetStatus,
-      {
-        isSolved: isYes,
-        closedAt: isYes ? now : undefined,
-        reopenedAt: !isYes ? now : undefined,
-        reopenedBy: !isYes ? (currentUser?.id || 'citizen') : undefined,
-        reopenReason: !isYes ? verificationNote : undefined,
-        citizenVerification: {
-          status,
-          comment: verificationNote,
-          verifiedAt: now,
-        },
-      },
-      isYes
-        ? 'Citizen confirmed that the issue was resolved'
-        : 'Citizen reopened the report',
-      { id: currentUser?.id, name: currentUser?.name || 'Citizen', role: 'Citizen' }
-    );
+    if (status === 'Partially' || status === 'No') {
+      const res = await submitCitizenVerificationFeedback({
+        issueId,
+        reportId,
+        citizenId: currentUser?.id || rep?.citizenId || 'citizen',
+        citizenName: currentUser?.name || rep?.citizenName || 'Citizen',
+        resolutionStatus: status,
+        rating: 1,
+        comment: comment || 'Citizen indicated water issue is not resolved.',
+      });
 
-    if (updated) {
-      setReports((prev) => prev.map((r) => (r.id === reportId || r.reportId === reportId ? { ...r, ...updated } : r)));
-    }
+      if (res.issue) {
+        setWaterIssues((prev) => prev.map((i) => (i.issueId === res.issue!.issueId ? res.issue! : i)));
+        setReports((prev) => prev.map((r) => (r.issueId === res.issue!.issueId ? { ...r, status: 'REOPENED' } : r)));
+      }
 
-    if (isYes) {
-      addToast('Thank you! Resolution verified and issue closed.', 'success');
+      addToast('Issue marked as unresolved and reopened for officer review.', 'info');
     } else {
-      addToast('Issue reopened and returned to Water Officer dashboard.', 'info');
+      addToast('Please complete the rating and verification feedback to confirm closure.', 'info');
     }
   };
 
-  // Update Priority with partial Firestore update (Requirement 10)
-  const updatePriority = (reportId: string, newPriority: ReportPriority) => {
+  // Update Priority
+  const updatePriority = (targetId: string, newPriority: ReportPriority) => {
+    const issueId = resolveTargetIssueId(targetId);
     const now = new Date().toISOString();
-    updateReportInFirestore(reportId, { priority: newPriority, updatedAt: now });
+    updateWaterIssueInFirestore(issueId, { priority: newPriority, updatedAt: now });
+
+    setWaterIssues((prev) =>
+      prev.map((i) => (i.issueId === issueId ? { ...i, priority: newPriority, updatedAt: now } : i))
+    );
     setReports((prev) =>
-      prev.map((r) => {
-        if (r.id === reportId || r.reportId === reportId) {
-          return { ...r, priority: newPriority, updatedAt: now };
-        }
-        return r;
-      })
+      prev.map((r) => (r.issueId === issueId ? { ...r, priority: newPriority, updatedAt: now } : r))
     );
 
     const upd: ReportUpdate = {
       id: `upd-${Date.now()}`,
       updateId: `upd-${Date.now()}`,
-      reportId: reportId,
+      reportId: issueId,
       status: 'OFFICER_REVIEW',
       message: `Priority updated to ${newPriority} by Water Officer ${currentUser?.name || 'Officer'}.`,
       createdBy: currentUser?.name || 'Water Department Officer',
@@ -1381,23 +1421,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast(`Priority updated to ${newPriority}`, 'success');
   };
 
-  // Update Category with partial Firestore update (Requirement 10)
-  const updateCategory = (reportId: string, newCategory: ReportCategory) => {
+  // Update Category
+  const updateCategory = (targetId: string, newCategory: ReportCategory) => {
+    const issueId = resolveTargetIssueId(targetId);
     const now = new Date().toISOString();
-    updateReportInFirestore(reportId, { category: newCategory, updatedAt: now });
+    updateWaterIssueInFirestore(issueId, { category: newCategory, updatedAt: now });
+
+    setWaterIssues((prev) =>
+      prev.map((i) => (i.issueId === issueId ? { ...i, category: newCategory, updatedAt: now } : i))
+    );
     setReports((prev) =>
-      prev.map((r) => {
-        if (r.id === reportId || r.reportId === reportId) {
-          return { ...r, category: newCategory, updatedAt: now };
-        }
-        return r;
-      })
+      prev.map((r) => (r.issueId === issueId ? { ...r, category: newCategory, updatedAt: now } : r))
     );
 
     const upd: ReportUpdate = {
       id: `upd-${Date.now()}`,
       updateId: `upd-${Date.now()}`,
-      reportId: reportId,
+      reportId: issueId,
       status: 'OFFICER_REVIEW',
       message: `Category updated to ${newCategory} by Water Officer ${currentUser?.name || 'Officer'}.`,
       createdBy: currentUser?.name || 'Water Department Officer',
@@ -1410,15 +1450,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast(`Category updated to ${newCategory}`, 'success');
   };
 
-  // Add Comment to Report
-  const addReportComment = (reportId: string, message: string) => {
+  // Add Comment to Report / Issue
+  const addReportComment = (targetId: string, message: string) => {
+    const issueId = resolveTargetIssueId(targetId);
     const now = new Date().toISOString();
-    const current = reports.find((r) => r.id === reportId || r.reportId === reportId);
+    const current = waterIssues.find((i) => i.issueId === issueId);
     const isOff = currentRole === 'department_officer' || currentRole === 'water_officer';
     const upd: ReportUpdate = {
       id: `upd-${Date.now()}`,
       updateId: `upd-${Date.now()}`,
-      reportId: reportId,
+      reportId: issueId,
       status: current?.status || 'SUBMITTED',
       message: message,
       createdBy: currentUser?.name || (isOff ? 'Water Officer' : 'Citizen'),
@@ -1430,41 +1471,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     addToast('Comment added successfully', 'success');
   };
 
-  // Add Feedback after closure without resetting report status (Requirements 9, 10, 18)
+  // Add Feedback / Verification with Multi-Citizen Support (Requirements: Verification required before closure)
   const addFeedback = async (feedback: Omit<ReportFeedback, 'id' | 'createdAt'>) => {
-    const now = new Date().toISOString();
-    const newFb: ReportFeedback = {
-      ...feedback,
-      id: `fb-${Date.now()}`,
-      feedbackId: `fb-${Date.now()}`,
-      createdAt: now,
-    };
-    setFeedbacks((prev) => [newFb, ...prev]);
-    await saveFeedbackToFirestore(newFb);
+    const rep = reports.find((r) => r.id === feedback.reportId || r.reportId === feedback.reportId);
+    const issueId = rep?.issueId || feedback.issueId || 'WTR-ISSUE-00025';
 
-    // Partial update to report to store feedback info WITHOUT touching status or resetting anything (Requirements 9, 10, 18)
-    await updateReportInFirestore(feedback.reportId, {
-      hasFeedback: true,
-      feedbackRating: feedback.rating,
-      feedbackComment: feedback.comment,
-      updatedAt: now,
+    const result = await submitCitizenVerificationFeedback({
+      issueId,
+      reportId: feedback.reportId,
+      citizenId: feedback.citizenId || currentUser?.id || 'citizen',
+      citizenName: feedback.citizenName || currentUser?.name || 'Resident Citizen',
+      resolutionStatus: feedback.resolutionStatus || 'Yes',
+      rating: feedback.rating || 5,
+      comment: feedback.comment || 'Issue verified by citizen.',
     });
 
-    setReports((prev) =>
-      prev.map((r) =>
-        r.id === feedback.reportId || r.reportId === feedback.reportId
-          ? {
-              ...r,
-              hasFeedback: true,
-              feedbackRating: feedback.rating,
-              feedbackComment: feedback.comment,
-              updatedAt: now,
-            }
-          : r
-      )
-    );
+    setFeedbacks((prev) => [result.feedback, ...prev.filter((f) => f.id !== result.feedback.id)]);
 
-    addToast('Feedback recorded. Thank you for rating the water service!', 'success');
+    if (result.issue) {
+      setWaterIssues((prev) => prev.map((i) => (i.issueId === result.issue!.issueId ? result.issue! : i)));
+      setReports((prev) =>
+        prev.map((r) =>
+          r.issueId === result.issue!.issueId || r.id === feedback.reportId
+            ? {
+                ...r,
+                status: result.issue!.status,
+                hasFeedback: r.id === feedback.reportId ? true : r.hasFeedback,
+                feedbackRating: r.id === feedback.reportId ? feedback.rating : r.feedbackRating,
+                feedbackComment: r.id === feedback.reportId ? feedback.comment : r.feedbackComment,
+              }
+            : r
+        )
+      );
+    }
+
+    if (result.allVerificationsCompleted) {
+      addToast('All citizen verifications completed! Water issue officially closed.', 'success');
+    } else if (result.issue?.status === 'REOPENED') {
+      addToast('Issue reported as unresolved and reopened for officer review.', 'info');
+    } else {
+      addToast(`Verification recorded (${result.verificationsCount} of ${result.verificationsTotal} completed). Awaiting remaining responses.`, 'info');
+    }
   };
 
   const t = translations[language] || translations.en;
@@ -1488,7 +1535,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     signInWithGoogleAuth,
     isFirebaseConnected,
     reports,
+    waterIssues,
+    waterReports,
     departmentReports,
+    departmentIssues,
     citizenReports,
     workers,
     departmentWorkers,
@@ -1500,6 +1550,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     markNotificationRead,
     clearNotifications,
     addReport,
+    getReportsForIssue,
+    getIssueForReport,
     confirmOfficerReview,
     assignWorkerToReport,
     startWorkOnReport,
@@ -1518,6 +1570,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActivePage,
     selectedReportId,
     setSelectedReportId,
+    selectedIssueId,
+    setSelectedIssueId,
+    selectedIssue,
     isReportModalOpen: isReportModalOpenState,
     setIsReportModalOpen,
     isAuthModalOpen,
